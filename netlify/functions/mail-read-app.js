@@ -141,13 +141,15 @@ async function searchMessages(
   top = 5,
   requestedScope = 'all',
   requestedExcludeLouvenberg = false,
-  requestedYear = 'all'
+  requestedYear = 'all',
+  requestedOnlyWithAttachments = false
 ) {
   const unique = new Map();
   const safeTop = Math.min(Math.max(Number(top) || 5, 1), 25);
   const rawScope = String(requestedScope || 'all').trim().toLowerCase();
   const searchScope = ['all', 'subject', 'from', 'body'].includes(rawScope) ? rawScope : 'all';
   const excludeLouvenberg = !!requestedExcludeLouvenberg;
+  const onlyWithAttachments = !!requestedOnlyWithAttachments;
   const parsedYear = Number(requestedYear);
   const yearFilter = Number.isInteger(parsedYear) && parsedYear >= 2000 && parsedYear <= 2100
     ? parsedYear
@@ -178,6 +180,8 @@ async function searchMessages(
       try {
         const data = await graphGet(accessToken, path, { ConsistencyLevel: 'eventual' });
         for (const m of data.value || []) {
+          if (onlyWithAttachments && !m.hasAttachments) continue;
+
           if (yearFilter) {
             const y = new Date(m.receivedDateTime).getFullYear();
             if (y !== yearFilter) continue;
@@ -332,7 +336,8 @@ exports.handler = async (event) => {
         payload.top || 5,
         payload.searchScope || 'all',
         payload.excludeLouvenberg === true,
-        payload.searchYear || 'all'
+        payload.searchYear || 'all',
+        payload.onlyWithAttachments === true
       );
       return { statusCode: 200, headers, body: JSON.stringify({ messages }) };
     }

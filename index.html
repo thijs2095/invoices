@@ -405,6 +405,7 @@ const state = {
   searchScope: 'all',
   searchYear: 'all',
   excludeLouvenberg: true,
+  onlyWithAttachments: loadOnlyWithAttachmentsSetting(),
   manualResults: [],
   mailViewer: {
     open: false,
@@ -420,6 +421,7 @@ const state = {
 const API_PATH = '/.netlify/functions/mail-read-app';
 const USER_SCOPES = ['User.Read'];
 const MAILBOX_SELECTION_KEY = 'invoiceFinder.selectedMailboxes';
+const ONLY_WITH_ATTACHMENTS_KEY = 'invoiceFinder.onlyWithAttachments';
 
 // ============================================================
 // Logging
@@ -667,6 +669,7 @@ async function runInvoiceSearch(inv) {
     searchScope: state.searchScope,
     searchYear: state.searchYear,
     excludeLouvenberg: state.excludeLouvenberg,
+    onlyWithAttachments: state.onlyWithAttachments,
     top: 5
   });
 
@@ -749,6 +752,7 @@ async function searchManual() {
       searchScope: state.searchScope,
       searchYear: state.searchYear,
       excludeLouvenberg: state.excludeLouvenberg,
+      onlyWithAttachments: state.onlyWithAttachments,
       top: 10
     });
     state.manualResults = data.messages || [];
@@ -891,6 +895,24 @@ function saveMailboxSelection() {
     localStorage.setItem(MAILBOX_SELECTION_KEY, JSON.stringify([...state.selectedMailboxes]));
   } catch (e) {
     // Ignore localStorage write errors (private mode/quota).
+  }
+}
+
+function saveOnlyWithAttachmentsSetting() {
+  try {
+    localStorage.setItem(ONLY_WITH_ATTACHMENTS_KEY, state.onlyWithAttachments ? 'true' : 'false');
+  } catch (e) {
+    // Ignore localStorage write errors (private mode/quota).
+  }
+}
+
+function loadOnlyWithAttachmentsSetting() {
+  try {
+    const raw = localStorage.getItem(ONLY_WITH_ATTACHMENTS_KEY);
+    if (raw === null) return true;
+    return raw === 'true';
+  } catch (e) {
+    return true;
   }
 }
 
@@ -1075,6 +1097,10 @@ function renderMain() {
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;">
           <input type="checkbox" id="exclude-louvenberg" ${state.excludeLouvenberg ? 'checked' : ''} style="accent-color:var(--accent)">
           <span>Filter mails van @louvenbergadvies.nl</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;">
+          <input type="checkbox" id="only-with-attachments" ${state.onlyWithAttachments ? 'checked' : ''} style="accent-color:var(--accent)">
+          <span>Alleen mails laten zien met bijlage</span>
         </label>
         <label>Handmatig zoeken</label>
         <div class="inline-input">
@@ -1315,6 +1341,20 @@ function bindMainEvents() {
         state.excludeLouvenberg
           ? 'Filter actief: @louvenbergadvies.nl wordt uitgesloten'
           : 'Filter uit: @louvenbergadvies.nl wordt meegenomen',
+        'info'
+      );
+    });
+  }
+
+  const onlyWithAttachments = document.getElementById('only-with-attachments');
+  if (onlyWithAttachments) {
+    onlyWithAttachments.addEventListener('change', e => {
+      state.onlyWithAttachments = !!e.target.checked;
+      saveOnlyWithAttachmentsSetting();
+      log(
+        state.onlyWithAttachments
+          ? 'Filter actief: alleen mails met bijlage'
+          : 'Filter uit: ook mails zonder bijlage',
         'info'
       );
     });
