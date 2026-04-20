@@ -184,19 +184,27 @@ async function getAttachments(accessToken, mailbox, messageId) {
     throw new Error('mailbox and messageId are required');
   }
 
-  const path = `/users/${encodeURIComponent(safeMailbox)}/messages/${encodeURIComponent(safeMessageId)}/attachments`
-    + '?$select=id,name,size,contentType,contentBytes,@odata.type';
+  const basePath = `/users/${encodeURIComponent(safeMailbox)}/messages/${encodeURIComponent(safeMessageId)}/attachments`;
+  const listPath = `${basePath}?$select=id,name,size,contentType,@odata.type`;
+  const data = await graphGet(accessToken, listPath);
 
-  const data = await graphGet(accessToken, path);
-  return (data.value || [])
-    .filter(a => a['@odata.type'] === '#microsoft.graph.fileAttachment')
-    .map(a => ({
-      id: a.id,
-      name: a.name,
-      size: a.size,
-      contentType: a.contentType,
-      contentBytes: a.contentBytes
-    }));
+  const result = [];
+  for (const a of (data.value || [])) {
+    if (a['@odata.type'] !== '#microsoft.graph.fileAttachment') continue;
+
+    // contentBytes exists on fileAttachment, not the base attachment type.
+    const detailPath = `${basePath}/${encodeURIComponent(a.id)}/microsoft.graph.fileAttachment?$select=id,name,size,contentType,contentBytes`;
+    const detail = await graphGet(accessToken, detailPath);
+    result.push({
+      id: detail.id,
+      name: detail.name,
+      size: detail.size,
+      contentType: detail.contentType,
+      contentBytes: detail.contentBytes
+    });
+  }
+
+  return result;
 }
 
 exports.handler = async (event) => {

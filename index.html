@@ -361,8 +361,6 @@ const state = {
   results: {},
   users: [],
   selectedMailboxes: new Set(),
-  mailboxSource: '',
-  mailboxQuickInput: localStorage.getItem('mailboxQuickInput') || '',
   isSearching: false,
   searchProgress: 0,
   logs: [],
@@ -505,13 +503,11 @@ async function initBackend() {
 async function loadUsers() {
   try {
     const data = await callApi('listMailboxes');
-    state.users = (data.mailboxes || []).filter(u => u.mail);
-    state.mailboxSource = data.source || '';
+    state.users = (data.mailboxes || []).filter(u => {
+      const mail = String(u.mail || '').toLowerCase().trim();
+      return mail.endsWith('@impossible-drinks.com');
+    });
     state.selectedMailboxes = new Set(state.users.map(u => u.mail));
-    if (!state.mailboxQuickInput && state.users.length) {
-      state.mailboxQuickInput = state.users.map(u => u.mail).join(', ');
-      localStorage.setItem('mailboxQuickInput', state.mailboxQuickInput);
-    }
     log(`${state.users.length} mailboxen geladen`, 'success');
     render();
   } catch (e) {
@@ -771,41 +767,6 @@ function getSelectedMailboxes() {
   return [...state.selectedMailboxes];
 }
 
-function parseMailboxInput(raw) {
-  return String(raw || '')
-    .split(/[\n,;]+/)
-    .map(v => v.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function applyQuickMailboxSelection() {
-  const wanted = new Set(parseMailboxInput(state.mailboxQuickInput));
-  if (wanted.size === 0) {
-    state.selectedMailboxes.clear();
-    render();
-    return;
-  }
-
-  const selected = [];
-  const unknown = [];
-  const knownByLower = new Map(state.users.map(u => [String(u.mail || '').toLowerCase(), u.mail]));
-
-  for (const mailbox of wanted) {
-    if (knownByLower.has(mailbox)) {
-      selected.push(knownByLower.get(mailbox));
-    } else {
-      unknown.push(mailbox);
-    }
-  }
-
-  state.selectedMailboxes = new Set(selected);
-  if (unknown.length) {
-    log(`Niet gevonden in lijst: ${unknown.slice(0, 5).join(', ')}${unknown.length > 5 ? '...' : ''}`, 'info');
-  }
-  log(`${selected.length} mailboxen geselecteerd via snelle lijst`, 'success');
-  render();
-}
-
 // ============================================================
 // Render
 // ============================================================
@@ -903,16 +864,6 @@ function renderMain() {
           <div class="mailbox-picker-actions">
             <button class="btn btn-sm" id="btn-select-all">Alles aan</button>
             <button class="btn btn-sm" id="btn-select-none">Alles uit</button>
-          </div>
-        </div>
-        <div class="config-section" style="margin-bottom:10px;">
-          <label>
-            Snelle mailboxkeuze (komma of nieuwe regel gescheiden)
-            ${state.mailboxSource ? `<span style="color:var(--text-muted)"> - bron: ${esc(state.mailboxSource)}</span>` : ''}
-          </label>
-          <div class="inline-input">
-            <input type="text" id="mailbox-quick-input" placeholder="warehouse@..., finance@..." value="${esc(state.mailboxQuickInput)}">
-            <button class="btn btn-sm" id="btn-apply-mailbox-quick">Toepassen</button>
           </div>
         </div>
         <div class="mailbox-list">
@@ -1114,23 +1065,6 @@ function bindMainEvents() {
       if (e.key === 'Enter') searchManual();
     });
   }
-
-  const quickInput = document.getElementById('mailbox-quick-input');
-  if (quickInput) {
-    quickInput.addEventListener('input', e => {
-      state.mailboxQuickInput = e.target.value;
-      localStorage.setItem('mailboxQuickInput', state.mailboxQuickInput);
-    });
-    quickInput.addEventListener('keydown', e => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        applyQuickMailboxSelection();
-      }
-    });
-  }
-  document.getElementById('btn-apply-mailbox-quick')?.addEventListener('click', () => {
-    applyQuickMailboxSelection();
-  });
 
   document.querySelectorAll('.mailbox-item input[type="checkbox"]').forEach(cb => {
     cb.addEventListener('change', e => {
