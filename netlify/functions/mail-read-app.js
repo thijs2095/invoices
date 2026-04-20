@@ -200,23 +200,26 @@ async function getAttachments(accessToken, mailbox, messageId) {
   }
 
   const basePath = `/users/${encodeURIComponent(safeMailbox)}/messages/${encodeURIComponent(safeMessageId)}/attachments`;
-  const listPath = `${basePath}?$select=id,name,size,contentType,@odata.type`;
+  const listPath = `${basePath}?$select=id,name,size,contentType`;
   const data = await graphGet(accessToken, listPath);
 
   const result = [];
   for (const a of (data.value || [])) {
-    if (a['@odata.type'] !== '#microsoft.graph.fileAttachment') continue;
-
-    // contentBytes exists on fileAttachment, not the base attachment type.
-    const detailPath = `${basePath}/${encodeURIComponent(a.id)}/microsoft.graph.fileAttachment?$select=id,name,size,contentType,contentBytes`;
-    const detail = await graphGet(accessToken, detailPath);
-    result.push({
-      id: detail.id,
-      name: detail.name,
-      size: detail.size,
-      contentType: detail.contentType,
-      contentBytes: detail.contentBytes
-    });
+    // Try to cast each attachment to fileAttachment and skip non-file attachments.
+    try {
+      const detailPath = `${basePath}/${encodeURIComponent(a.id)}/microsoft.graph.fileAttachment?$select=id,name,size,contentType,contentBytes`;
+      const detail = await graphGet(accessToken, detailPath);
+      result.push({
+        id: detail.id,
+        name: detail.name,
+        size: detail.size,
+        contentType: detail.contentType,
+        contentBytes: detail.contentBytes
+      });
+    } catch (e) {
+      // itemAttachment/referenceAttachment cannot be cast to fileAttachment.
+      continue;
+    }
   }
 
   return result;
