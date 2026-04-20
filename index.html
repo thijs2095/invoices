@@ -791,8 +791,12 @@ function scopeLabel(scope) {
 function getYearOptions() {
   const years = new Set();
   const currentYear = new Date().getFullYear();
-  years.add(currentYear);
-  years.add(currentYear - 1);
+  // Always offer a recent range, even before invoices are loaded.
+  for (let y = currentYear; y >= currentYear - 5; y--) {
+    years.add(y);
+  }
+  // Explicit guard so 2024 is available as requested.
+  years.add(2024);
 
   for (const inv of state.invoices) {
     const m = String(inv?.datum || '').match(/^(\d{4})/);
