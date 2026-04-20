@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Impossible Drinks — Invoice Finder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0a0a0c;
+    --surface: #141418;
+    --surface2: #1c1c22;
+    --surface3: #24242c;
+    --border: #2a2a34;
+    --border-hover: #3a3a48;
+    --text: #e8e8ec;
+    --text-dim: #8888a0;
+    --text-muted: #5c5c72;
+    --accent: #c8a46e;
+    --accent-dim: #8a7245;
+    --accent-bg: rgba(200,164,110,0.08);
+    --green: #4ade80;
+    --green-bg: rgba(74,222,128,0.1);
+    --red: #f87171;
+    --red-bg: rgba(248,113,113,0.1);
+    --blue: #60a5fa;
+    --blue-bg: rgba(96,165,250,0.1);
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+
+  .mono { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
+
+  /* Layout */
+  .app { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0; margin-bottom: 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 {
+    font-size: 1.4em; font-weight: 600; letter-spacing: -0.02em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .header h1 .dot { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+
+  .user-badge {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 6px 14px; border-radius: 20px; font-size: 0.85em;
+  }
+  .user-badge .indicator {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  }
+
+  /* Buttons */
+  .btn {
+    padding: 8px 18px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); font-family: inherit; font-size: 0.88em;
+    cursor: pointer; transition: all 0.15s; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn:hover { border-color: var(--border-hover); background: var(--surface2); }
+  .btn-primary {
+    background: var(--accent); border-color: var(--accent);
+    color: #0a0a0c; font-weight: 600;
+  }
+  .btn-primary:hover { background: #d4b07a; }
+  .btn-sm { padding: 5px 12px; font-size: 0.8em; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Cards */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 24px;
+  }
+  .card-title {
+    font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-muted); margin-bottom: 16px; font-weight: 600;
+  }
+
+  /* Config panel */
+  .config-panel {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 700px) { .config-panel { grid-template-columns: 1fr; } }
+
+  .config-section label {
+    display: block; font-size: 0.82em; color: var(--text-dim);
+    margin-bottom: 6px; font-weight: 500;
+  }
+  .config-section input[type="text"],
+  .config-section select {
+    width: 100%; padding: 9px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface2);
+    color: var(--text); font-family: inherit; font-size: 0.9em;
+    outline: none; transition: border-color 0.15s;
+  }
+  .config-section input:focus, .config-section select:focus {
+    border-color: var(--accent-dim);
+  }
+
+  /* MSAL Config */
+  .msal-config {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 20px; margin-bottom: 24px;
+  }
+  .msal-config summary {
+    cursor: pointer; font-size: 0.82em; color: var(--text-dim);
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .msal-config .fields {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px;
+  }
+  .msal-config .fields .full { grid-column: 1 / -1; }
+  .msal-config label {
+    display: block; font-size: 0.78em; color: var(--text-muted); margin-bottom: 4px;
+  }
+  .msal-config input {
+    width: 100%; padding: 8px 10px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--bg);
+    color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 0.82em;
+    outline: none;
+  }
+  .msal-config input:focus { border-color: var(--accent-dim); }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: var(--radius-lg);
+    padding: 32px; text-align: center; cursor: pointer;
+    transition: all 0.2s; margin-bottom: 24px;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--accent-dim); background: var(--accent-bg);
+  }
+  .upload-zone .icon { font-size: 2em; margin-bottom: 8px; opacity: 0.5; }
+  .upload-zone p { color: var(--text-dim); font-size: 0.9em; }
+  .upload-zone .filename {
+    color: var(--accent); font-weight: 500; margin-top: 6px;
+  }
+
+  /* Table */
+  .table-wrap {
+    overflow-x: auto; border: 1px solid var(--border);
+    border-radius: var(--radius-lg); margin-bottom: 24px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+  thead { background: var(--surface2); }
+  th {
+    text-align: left; padding: 10px 14px; font-weight: 600;
+    color: var(--text-dim); font-size: 0.78em; text-transform: uppercase;
+    letter-spacing: 0.06em; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover { background: var(--surface2); }
+  tr.found { background: var(--green-bg); }
+  tr.not-found { background: transparent; }
+  tr.searching td:first-child::before {
+    content: ''; display: inline-block; width: 12px; height: 12px;
+    border: 2px solid var(--accent-dim); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    margin-right: 8px; vertical-align: middle;
+  }
+
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 12px; font-size: 0.82em; font-weight: 500;
+  }
+  .status-badge.found { background: var(--green-bg); color: var(--green); }
+  .status-badge.not-found { background: var(--red-bg); color: var(--red); }
+  .status-badge.pending { background: var(--surface3); color: var(--text-muted); }
+  .status-badge.searching { background: var(--blue-bg); color: var(--blue); }
+
+  .attachment-list { margin-top: 6px; }
+  .attachment-item {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--surface3); border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 4px; font-size: 0.78em;
+    margin: 2px 4px 2px 0; cursor: pointer; transition: all 0.15s;
+    color: var(--text-dim); text-decoration: none;
+  }
+  .attachment-item:hover {
+    border-color: var(--accent-dim); color: var(--accent);
+  }
+
+  .mail-snippet {
+    font-size: 0.8em; color: var(--text-muted); margin-top: 4px;
+    max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* Progress bar */
+  .progress-bar {
+    height: 3px; background: var(--surface3); border-radius: 2px;
+    margin-bottom: 20px; overflow: hidden;
+  }
+  .progress-bar .fill {
+    height: 100%; background: var(--accent); border-radius: 2px;
+    transition: width 0.3s;
+  }
+
+  .stats-row {
+    display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 20px;
+    flex: 1; min-width: 140px;
+  }
+  .stat .value { font-size: 1.6em; font-weight: 700; letter-spacing: -0.02em; }
+  .stat .label { font-size: 0.75em; color: var(--text-muted); margin-top: 2px; }
+  .stat.found .value { color: var(--green); }
+  .stat.not-found .value { color: var(--red); }
+
+  /* Login screen */
+  .login-screen {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 60vh; text-align: center;
+  }
+  .login-screen h2 { font-size: 1.8em; font-weight: 700; margin-bottom: 8px; }
+  .login-screen p { color: var(--text-dim); margin-bottom: 28px; max-width: 400px; }
+  .login-screen .btn { font-size: 1em; padding: 12px 32px; }
+
+  .logo-text {
+    font-weight: 700; font-size: 1.1em; letter-spacing: 0.04em;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center; padding: 48px 20px; color: var(--text-muted);
+  }
+  .empty-state .icon { font-size: 2.5em; margin-bottom: 12px; opacity: 0.3; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
+
+  .search-actions {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+
+  .log-panel {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px; margin-top: 16px;
+    max-height: 200px; overflow-y: auto; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75em; color: var(--text-muted); line-height: 1.8;
+  }
+  .log-panel .log-entry { white-space: pre-wrap; }
+  .log-panel .log-entry.error { color: var(--red); }
+  .log-panel .log-entry.success { color: var(--green); }
+  .log-panel .log-entry.info { color: var(--blue); }
+
+  .inline-input {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .inline-input input {
+    flex: 1; padding: 8px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface2);
+    color: var(--text); font-family: inherit; font-size: 0.88em; outline: none;
+  }
+  .inline-input input:focus { border-color: var(--accent-dim); }
+
+  /* Search tags */
+  .search-tags {
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start;
+    min-width: 180px;
+  }
+  .search-tag {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: var(--accent-bg); border: 1px solid var(--accent-dim);
+    color: var(--accent); padding: 2px 8px; border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.78em;
+    max-width: 200px; line-height: 1.4;
+  }
+  .search-tag .remove-tag {
+    cursor: pointer; opacity: 0.5; font-size: 1.1em; line-height: 1;
+    margin-left: 2px;
+  }
+  .search-tag .remove-tag:hover { opacity: 1; }
+  .tag-add-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 4px;
+    border: 1px dashed var(--border); background: transparent;
+    color: var(--text-muted); cursor: pointer; font-size: 1em;
+    transition: all 0.15s; flex-shrink: 0;
+  }
+  .tag-add-btn:hover { border-color: var(--accent-dim); color: var(--accent); }
+  .tag-input-wrap {
+    display: flex; gap: 4px; align-items: center; margin-top: 4px; width: 100%;
+  }
+  .tag-input-wrap input {
+    flex: 1; padding: 3px 7px; border-radius: 4px; min-width: 100px;
+    border: 1px solid var(--accent-dim); background: var(--bg);
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78em; outline: none;
+  }
+  .tag-input-wrap input:focus { border-color: var(--accent); }
+  .tag-input-wrap input::placeholder { color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<div class="app" id="app"></div>
+
+<!-- MSAL 2.x browser -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-authentication-library-js/2.38.3/msal-browser.min.js"></script>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const state = {
+  msalInstance: null,
+  account: null,
+  accessToken: null,
+  // MSAL config
+  clientId: '',
+  tenantId: '',
+  redirectUri: location.origin + location.pathname,
+  // Data
+  invoices: [],
+  results: {},       // { rowIdx: { found, mails: [...] } }
+  users: [],         // org users (mailboxes)
+  searchScope: 'all', // 'all' or 'me'
+  isSearching: false,
+  searchProgress: 0,
+  logs: [],
+  fileName: null,
+  // manual search
+  manualQuery: '',
+  manualResults: [],
+  // demo
+  demoMode: false,
+};
+
+// ============================================================
+// Logging
+// ============================================================
+function log(msg, type = '') {
+  const ts = new Date().toLocaleTimeString('nl-NL');
+  state.logs.push({ ts, msg, type });
+  if (state.logs.length > 200) state.logs.shift();
+  render();
+}
+
+// ============================================================
+// MSAL helpers
+// ============================================================
+function initMsal() {
+  if (!state.clientId || !state.tenantId) return;
+  const config = {
+    auth: {
+      clientId: state.clientId,
+      authority: `https://login.microsoftonline.com/${state.tenantId}`,
+      redirectUri: state.redirectUri,
+    },
+    cache: { cacheLocation: 'sessionStorage' }
+  };
+  state.msalInstance = new msal.PublicClientApplication(config);
+  // Check if returning from redirect
+  state.msalInstance.handleRedirectPromise().then(resp => {
+    if (resp) {
+      state.account = resp.account;
+      state.accessToken = resp.accessToken;
+      log('Ingelogd als ' + resp.account.username, 'success');
+      loadUsers();
+    } else {
+      const accounts = state.msalInstance.getAllAccounts();
+      if (accounts.length) {
+        state.account = accounts[0];
+        acquireTokenSilent();
+      }
+    }
+    render();
+  });
+}
+
+const SCOPES = ['Mail.ReadWrite', 'User.Read.All', 'Mail.Read.All'];
+
+async function login() {
+  if (!state.msalInstance) {
+    alert('Configureer eerst Client ID en Tenant ID');
+    return;
+  }
+  try {
+    await state.msalInstance.loginRedirect({ scopes: SCOPES });
+  } catch (e) {
+    log('Login error: ' + e.message, 'error');
+  }
+}
+
+async function acquireTokenSilent() {
+  try {
+    const resp = await state.msalInstance.acquireTokenSilent({
+      scopes: SCOPES, account: state.account
+    });
+    state.accessToken = resp.accessToken;
+    log('Token vernieuwd', 'info');
+    loadUsers();
+    render();
+  } catch (e) {
+    log('Token expired, opnieuw inloggen…', 'error');
+    login();
+  }
+}
+
+function logout() {
+  if (state.msalInstance) {
+    state.msalInstance.logoutRedirect();
+  }
+}
+
+async function graphGet(url) {
+  if (!state.accessToken) await acquireTokenSilent();
+  const resp = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
+    headers: { Authorization: `Bearer ${state.accessToken}` }
+  });
+  if (resp.status === 401) {
+    await acquireTokenSilent();
+    return graphGet(url);
+  }
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Graph ${resp.status}: ${err}`);
+  }
+  return resp.json();
+}
+
+// ============================================================
+// Load org users
+// ============================================================
+async function loadUsers() {
+  try {
+    const data = await graphGet('/users?$select=id,displayName,mail,userPrincipalName&$top=999');
+    state.users = (data.value || []).filter(u => u.mail);
+    log(`${state.users.length} mailboxen gevonden`, 'success');
+    render();
+  } catch (e) {
+    log('Kan gebruikers niet laden: ' + e.message, 'error');
+    state.users = [];
+    render();
+  }
+}
+
+// ============================================================
+// Excel parsing
+// ============================================================
+function handleFile(file) {
+  state.fileName = file.name;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const wb = XLSX.read(e.target.result, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+    // Parse rows: skip header and section headers
+    const invoices = [];
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || !row[0] || !row[2]) continue; // need dagboek + datum
+      const desc = String(row[3] || '');
+      if (!desc) continue;
+      const amount = row[4] || 0;
+      const datum = row[2];
+      let dateStr = '';
+      if (typeof datum === 'number') {
+        // Excel serial date
+        const d = XLSX.SSF.parse_date_code(datum);
+        dateStr = `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+      } else if (datum instanceof Date) {
+        dateStr = datum.toISOString().split('T')[0];
+      } else {
+        dateStr = String(datum);
+      }
+      invoices.push({
+        idx: i,
+        dagboek: row[1] || '',
+        datum: dateStr,
+        omschrijving: desc,
+        bedrag: parseFloat(amount) || 0,
+        searchTerms: extractSearchTerms(desc),
+      });
+    }
+    state.invoices = invoices;
+    state.results = {};
+    log(`${invoices.length} regels geladen uit ${file.name}`, 'success');
+    render();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function extractSearchTerms(desc) {
+  // Try to extract meaningful search terms from the description
+  // Remove bank reference numbers, payment processor info, etc.
+  let clean = desc
+    .replace(/via\s+(Stichting\s+)?Mollie\s+Payments?/gi, '')
+    .replace(/via\s+Tikkie\s+Zakelijk/gi, '')
+    .replace(/via\s+Stripe\s+Technology.*/gi, '')
+    .replace(/via\s+Rabo\s+Zakelijk\s+Betaalverzoek/gi, '')
+    .replace(/via\s+CM\.com/gi, '')
+    .replace(/NL\d{2}[A-Z]{4}\d+/g, '') // IBAN
+    .replace(/\b\d{10,}\b/g, '')         // long numbers
+    .replace(/\b[A-Z0-9]{8,20}\b/g, (m) => {
+      // Keep if it looks like a name, remove if it's a reference
+      return /[aeiou]/i.test(m) ? m : '';
+    })
+    .replace(/PAS\d+\s+NR:\w+/g, '')
+    .replace(/BEA,?\s*Apple\s*Pay\s*/gi, '')
+    .replace(/SP\s+\w+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Get the first meaningful part (usually company name)
+  const parts = clean.split(/[,\/]/);
+  const name = parts[0].trim();
+
+  // If there are numbers that look like invoice numbers, include them
+  const invoiceNums = desc.match(/\b\d{4,8}\b/g) || [];
+  const companyName = (name.substring(0, 60) || desc.substring(0, 40)).trim();
+  const terms = [companyName];
+  // Add distinct invoice-like numbers as separate search terms
+  for (const num of invoiceNums) {
+    if (!terms.includes(num) && num.length >= 4) terms.push(num);
+  }
+  return terms.filter(Boolean);
+}
+
+// ============================================================
+// Search logic
+// ============================================================
+async function searchAllInvoices() {
+  if (!state.accessToken || state.invoices.length === 0) return;
+  state.isSearching = true;
+  state.searchProgress = 0;
+  state.results = {};
+  render();
+
+  const mailboxes = state.searchScope === 'all' && state.users.length > 0
+    ? state.users.map(u => u.id)
+    : ['me'];
+
+  for (let i = 0; i < state.invoices.length; i++) {
+    const inv = state.invoices[i];
+    state.searchProgress = ((i + 1) / state.invoices.length) * 100;
+
+    const terms = inv.searchTerms || [];
+    log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
+
+    const allMails = [];
+    const seenIds = new Set();
+    for (const searchQ of terms) {
+      for (const userId of mailboxes) {
+        try {
+          const endpoint = userId === 'me' ? '/me/messages' : `/users/${userId}/messages`;
+          const q = encodeURIComponent(`"${searchQ}"`);
+          const data = await graphGet(
+            `${endpoint}?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview&$top=5`
+          );
+          if (data.value && data.value.length) {
+            for (const m of data.value) {
+              if (seenIds.has(m.id)) continue;
+              seenIds.add(m.id);
+              m._mailbox = userId === 'me' ? state.account.username :
+                (state.users.find(u => u.id === userId)?.mail || userId);
+              m._matchedTerm = searchQ;
+              allMails.push(m);
+            }
+          }
+        } catch (e) {
+          // Skip mailbox errors silently (no access etc)
+        }
+      }
+    }
+
+    state.results[i] = {
+      found: allMails.length > 0,
+      mails: allMails,
+    };
+    render();
+
+    // Small delay to avoid throttling
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  state.isSearching = false;
+  const foundCount = Object.values(state.results).filter(r => r.found).length;
+  log(`Klaar! ${foundCount}/${state.invoices.length} facturen gevonden`, 'success');
+  render();
+}
+
+async function searchSingleInvoice(idx) {
+  const inv = state.invoices[idx];
+  if (!inv || !state.accessToken) return;
+
+  const mailboxes = state.searchScope === 'all' && state.users.length > 0
+    ? state.users.map(u => u.id)
+    : ['me'];
+
+  const terms = inv.searchTerms || [];
+  log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
+  const allMails = [];
+  const seenIds = new Set();
+
+  for (const searchQ of terms) {
+    for (const userId of mailboxes) {
+      try {
+        const endpoint = userId === 'me' ? '/me/messages' : `/users/${userId}/messages`;
+        const q = encodeURIComponent(`"${searchQ}"`);
+        const data = await graphGet(
+          `${endpoint}?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview&$top=5`
+        );
+        if (data.value && data.value.length) {
+          for (const m of data.value) {
+            if (seenIds.has(m.id)) continue;
+            seenIds.add(m.id);
+            m._mailbox = userId === 'me' ? state.account.username :
+              (state.users.find(u => u.id === userId)?.mail || userId);
+            m._matchedTerm = searchQ;
+            allMails.push(m);
+          }
+        }
+      } catch (e) {
+        log(`Fout bij mailbox: ${e.message}`, 'error');
+      }
+    }
+  }
+
+  state.results[idx] = { found: allMails.length > 0, mails: allMails };
+  log(allMails.length ? `${allMails.length} mails gevonden` : 'Geen resultaten', allMails.length ? 'success' : 'error');
+  render();
+}
+
+// Manual search
+async function searchManual() {
+  if (!state.accessToken || !state.manualQuery) return;
+  log(`Handmatig zoeken: "${state.manualQuery}"`, 'info');
+
+  const mailboxes = state.searchScope === 'all' && state.users.length > 0
+    ? state.users.map(u => u.id) : ['me'];
+
+  state.manualResults = [];
+  render();
+
+  for (const userId of mailboxes) {
+    try {
+      const endpoint = userId === 'me' ? '/me/messages' : `/users/${userId}/messages`;
+      const q = encodeURIComponent(`"${state.manualQuery}"`);
+      const data = await graphGet(
+        `${endpoint}?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview&$top=10`
+      );
+      if (data.value) {
+        for (const m of data.value) {
+          m._mailbox = userId === 'me' ? state.account.username :
+            (state.users.find(u => u.id === userId)?.mail || userId);
+          state.manualResults.push(m);
+        }
+      }
+    } catch (e) { /* skip */ }
+  }
+  log(`${state.manualResults.length} resultaten gevonden`, state.manualResults.length ? 'success' : 'error');
+  render();
+}
+
+// ============================================================
+// Attachments
+// ============================================================
+async function fetchAttachments(mailboxId, messageId) {
+  try {
+    const endpoint = mailboxId === 'me' || mailboxId === state.account?.username
+      ? `/me/messages/${messageId}/attachments`
+      : `/users/${mailboxId}/messages/${messageId}/attachments`;
+    // Find user id from email
+    let uid = mailboxId;
+    if (mailboxId !== 'me') {
+      const user = state.users.find(u => u.mail === mailboxId);
+      if (user) uid = user.id;
+    }
+    const actualEndpoint = uid === 'me'
+      ? `/me/messages/${messageId}/attachments`
+      : `/users/${uid}/messages/${messageId}/attachments`;
+
+    const data = await graphGet(actualEndpoint);
+    return data.value || [];
+  } catch (e) {
+    log('Bijlagen ophalen mislukt: ' + e.message, 'error');
+    return [];
+  }
+}
+
+function downloadAttachment(att) {
+  if (!att.contentBytes) return;
+  const byteChars = atob(att.contentBytes);
+  const byteArray = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([byteArray], { type: att.contentType || 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = att.name || 'attachment';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function showAttachments(mailbox, messageId, btnEl) {
+  btnEl.disabled = true;
+  btnEl.textContent = 'Laden…';
+  const atts = await fetchAttachments(mailbox, messageId);
+  if (atts.length === 0) {
+    btnEl.textContent = 'Geen bijlagen';
+    return;
+  }
+  // Create download buttons
+  const container = btnEl.parentElement;
+  btnEl.style.display = 'none';
+  for (const att of atts) {
+    if (att['@odata.type'] === '#microsoft.graph.itemAttachment') continue;
+    const link = document.createElement('a');
+    link.className = 'attachment-item';
+    link.href = '#';
+    link.textContent = `📎 ${att.name} (${formatBytes(att.size)})`;
+    link.onclick = (e) => { e.preventDefault(); downloadAttachment(att); };
+    container.appendChild(link);
+  }
+}
+
+function formatBytes(b) {
+  if (!b) return '0 B';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
+function formatDate(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function formatCurrency(n) {
+  return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(n);
+}
+
+// ============================================================
+// Demo Mode
+// ============================================================
+const DEMO_INVOICES = [
+  { idx:1, dagboek:'Dagboek credit card afschriften', datum:'2024-04-03', omschrijving:'Transavia', bedrag:60, searchTerms:['Transavia'] },
+  { idx:2, dagboek:'Dagboek credit card afschriften', datum:'2024-04-05', omschrijving:'Mac Carthy', bedrag:100, searchTerms:['Mac Carthy'] },
+  { idx:3, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-04-08', omschrijving:'Fitmart GmbH Co. KG', bedrag:44.74, searchTerms:['Fitmart GmbH'] },
+  { idx:4, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-04-19', omschrijving:'Goese Golf B.V. Bernardus rose', bedrag:4452.50, searchTerms:['Goese Golf', '24011822'] },
+  { idx:5, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-04-25', omschrijving:'Wijnhuis Rosmalen', bedrag:4510.37, searchTerms:['Wijnhuis Rosmalen'] },
+  { idx:6, dagboek:'Dagboek credit card afschriften', datum:'2024-04-28', omschrijving:'INTUIT MAILCHIMP', bedrag:12.24, searchTerms:['INTUIT MAILCHIMP'] },
+  { idx:7, dagboek:'Dagboek credit card afschriften', datum:'2024-05-10', omschrijving:'AIRBNB * HMPTATFNKQ', bedrag:84.81, searchTerms:['AIRBNB'] },
+  { idx:8, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-05-23', omschrijving:'Frans van den Hoogen Wijnkoopers', bedrag:329.75, searchTerms:['Frans van den Hoogen', 'ORD01370'] },
+  { idx:9, dagboek:'Dagboek credit card afschriften', datum:'2024-05-30', omschrijving:'LinkedIn', bedrag:124.48, searchTerms:['LinkedIn'] },
+  { idx:10, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-06-06', omschrijving:'Goese Golf B.V. 4930', bedrag:1875.50, searchTerms:['Goese Golf', '4930'] },
+  { idx:11, dagboek:'Dagboek credit card afschriften', datum:'2024-06-17', omschrijving:'Vignapart', bedrag:740, searchTerms:['Vignapart'] },
+  { idx:12, dagboek:'Dagboek credit card afschriften', datum:'2024-06-18', omschrijving:'Gusto e Tradizione Sig', bedrag:834.23, searchTerms:['Gusto e Tradizione'] },
+  { idx:13, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-07-09', omschrijving:'MP Wines C.V.', bedrag:1115.70, searchTerms:['MP Wines'] },
+  { idx:14, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-07-24', omschrijving:'LXA Advocaten 202400990', bedrag:545.21, searchTerms:['LXA Advocaten', '202400990'] },
+  { idx:15, dagboek:'Dagboek credit card afschriften', datum:'2024-08-06', omschrijving:'Excellencerhum', bedrag:399.94, searchTerms:['Excellencerhum'] },
+  { idx:16, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-08-22', omschrijving:'DHL Express IXOPAY Online', bedrag:4079.53, searchTerms:['DHL Express'] },
+  { idx:17, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-08-26', omschrijving:'MP Wines C.V. 2024089', bedrag:20430, searchTerms:['MP Wines', '2024089'] },
+  { idx:18, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-08-27', omschrijving:'Somm Times 24700465', bedrag:2221.56, searchTerms:['Somm Times', '24700465'] },
+  { idx:19, dagboek:'Dagboek credit card afschriften', datum:'2024-08-27', omschrijving:'Vueling', bedrag:91.99, searchTerms:['Vueling'] },
+  { idx:20, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-08-30', omschrijving:'Drankdozijn.nl', bedrag:199.98, searchTerms:['Drankdozijn'] },
+];
+
+const DEMO_USERS = [
+  { id:'u1', displayName:'Thijs van der Berg', mail:'thijs@impossible-drinks.com', userPrincipalName:'thijs@impossible-drinks.com' },
+  { id:'u2', displayName:'Info', mail:'info@impossible-drinks.com', userPrincipalName:'info@impossible-drinks.com' },
+  { id:'u3', displayName:'Orders', mail:'orders@impossible-drinks.com', userPrincipalName:'orders@impossible-drinks.com' },
+];
+
+const DEMO_SENDERS = [
+  'facturen@goesegolf.nl', 'info@wijnhuisrosmalen.nl', 'noreply@transavia.com',
+  'billing@mailchimp.com', 'invoices@dhl.com', 'info@mpwines.nl',
+  'admin@lxa.nl', 'info@vignapart.it', 'orders@excellencerhum.com',
+  'accounting@sommtimes.nl', 'noreply@linkedin.com', 'invoicing@airbnb.com',
+  'billing@vueling.com', 'factuur@drankdozijn.nl', 'info@fitmart.de',
+  'noreply@gustoetradizione.it', 'info@fransvdhoogen.nl', 'receipt@maccarthy.ie',
+];
+
+function demoMakeMail(inv, mailboxIdx) {
+  const hasAtt = Math.random() > 0.3;
+  const sender = DEMO_SENDERS[Math.floor(Math.random() * DEMO_SENDERS.length)];
+  const mailbox = DEMO_USERS[mailboxIdx % DEMO_USERS.length];
+  const subjectPrefixes = ['Factuur ', 'Invoice ', 'Rekening ', 'Bevestiging betaling ', 'Order bevestiging '];
+  const label = (inv.searchTerms || [])[0] || inv.omschrijving;
+  const subject = subjectPrefixes[Math.floor(Math.random() * subjectPrefixes.length)] + label;
+  const d = new Date(inv.datum);
+  d.setDate(d.getDate() - Math.floor(Math.random() * 10));
+  const safeName = label.replace(/\s+/g,'_');
+  return {
+    id: 'demo-' + Math.random().toString(36).substring(2, 10),
+    subject,
+    from: { emailAddress: { address: sender, name: sender.split('@')[0] } },
+    receivedDateTime: d.toISOString(),
+    hasAttachments: hasAtt,
+    bodyPreview: `Geachte klant, hierbij ontvangt u de factuur voor ${label}. Bedrag: €${inv.bedrag.toFixed(2)}. Met vriendelijke groet.`,
+    _mailbox: mailbox.mail,
+    _matchedTerm: label,
+    _demoAttachments: hasAtt ? [
+      { name: `Factuur_${safeName}_${inv.datum}.pdf`, size: Math.floor(Math.random()*400000)+50000, contentType:'application/pdf', contentBytes: btoa('Demo PDF content for ' + label), '@odata.type':'#microsoft.graph.fileAttachment' },
+      ...(Math.random() > 0.6 ? [{ name: `Bijlage_${safeName}.xlsx`, size: Math.floor(Math.random()*200000)+20000, contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', contentBytes: btoa('Demo Excel for ' + label), '@odata.type':'#microsoft.graph.fileAttachment' }] : []),
+    ] : [],
+  };
+}
+
+function activateDemo() {
+  state.demoMode = true;
+  state.account = { username: 'thijs@impossible-drinks.com', name: 'Thijs (DEMO)' };
+  state.accessToken = 'demo-token';
+  state.users = DEMO_USERS;
+  // Deep copy demo invoices so edits don't mutate the template
+  state.invoices = DEMO_INVOICES.map(inv => ({ ...inv, searchTerms: [...inv.searchTerms] }));
+  state.fileName = 'Impossible_JR2024_ontbrekende_facturen.xlsx (demo)';
+  state.results = {};
+  log('Demo modus geactiveerd', 'success');
+  log(`${DEMO_INVOICES.length} demo-regels geladen`, 'info');
+  log(`${DEMO_USERS.length} mailboxen gevonden`, 'success');
+  render();
+}
+
+async function demoSearchAll() {
+  state.isSearching = true;
+  state.searchProgress = 0;
+  state.results = {};
+  render();
+
+  for (let i = 0; i < state.invoices.length; i++) {
+    const inv = state.invoices[i];
+    state.searchProgress = ((i + 1) / state.invoices.length) * 100;
+    const terms = inv.searchTerms || [];
+    log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
+
+    // Simulate delay
+    await new Promise(r => setTimeout(r, 300 + Math.random() * 400));
+
+    // ~65% chance of finding something
+    const found = Math.random() > 0.35;
+    const mails = [];
+    if (found) {
+      const count = Math.random() > 0.6 ? 2 : 1;
+      for (let j = 0; j < count; j++) {
+        mails.push(demoMakeMail(inv, j));
+      }
+    }
+    state.results[i] = { found, mails };
+    render();
+  }
+
+  state.isSearching = false;
+  const foundCount = Object.values(state.results).filter(r => r.found).length;
+  log(`Klaar! ${foundCount}/${state.invoices.length} facturen gevonden`, 'success');
+  render();
+}
+
+async function demoSearchSingle(idx) {
+  const inv = state.invoices[idx];
+  if (!inv) return;
+  const terms = inv.searchTerms || [];
+  log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
+  await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+  const found = Math.random() > 0.25;
+  const mails = found ? [demoMakeMail(inv, 0)] : [];
+  state.results[idx] = { found, mails };
+  log(found ? `${mails.length} mails gevonden` : 'Geen resultaten', found ? 'success' : 'error');
+  render();
+}
+
+async function demoSearchManual() {
+  if (!state.manualQuery) return;
+  log(`Handmatig zoeken: "${state.manualQuery}"`, 'info');
+  await new Promise(r => setTimeout(r, 600));
+  state.manualResults = [];
+  const count = Math.floor(Math.random() * 4) + 1;
+  for (let i = 0; i < count; i++) {
+    const hasAtt = Math.random() > 0.4;
+    const sender = DEMO_SENDERS[Math.floor(Math.random() * DEMO_SENDERS.length)];
+    const mailbox = DEMO_USERS[Math.floor(Math.random() * DEMO_USERS.length)];
+    const d = new Date('2024-06-01');
+    d.setDate(d.getDate() + Math.floor(Math.random() * 180));
+    state.manualResults.push({
+      id: 'demo-manual-' + i,
+      subject: `Re: ${state.manualQuery} — factuur / bevestiging`,
+      from: { emailAddress: { address: sender } },
+      receivedDateTime: d.toISOString(),
+      hasAttachments: hasAtt,
+      bodyPreview: `Betreft: ${state.manualQuery}. Zie bijgevoegd de gevraagde documenten.`,
+      _mailbox: mailbox.mail,
+      _demoAttachments: hasAtt ? [
+        { name: `${state.manualQuery.replace(/\s+/g,'_')}.pdf`, size: 125000, contentType:'application/pdf', contentBytes: btoa('Demo'), '@odata.type':'#microsoft.graph.fileAttachment' }
+      ] : [],
+    });
+  }
+  log(`${state.manualResults.length} resultaten gevonden`, 'success');
+  render();
+}
+
+async function demoShowAttachments(mailbox, messageId, btnEl) {
+  btnEl.disabled = true;
+  btnEl.textContent = 'Laden…';
+  await new Promise(r => setTimeout(r, 400));
+
+  // Find the demo mail across all results + manual results
+  let mail = null;
+  for (const r of Object.values(state.results)) {
+    if (r.mails) mail = r.mails.find(m => m.id === messageId);
+    if (mail) break;
+  }
+  if (!mail) mail = state.manualResults.find(m => m.id === messageId);
+  const atts = mail?._demoAttachments || [];
+
+  if (atts.length === 0) {
+    btnEl.textContent = 'Geen bijlagen';
+    return;
+  }
+  const container = btnEl.parentElement;
+  btnEl.style.display = 'none';
+  for (const att of atts) {
+    const link = document.createElement('a');
+    link.className = 'attachment-item';
+    link.href = '#';
+    link.textContent = `📎 ${att.name} (${formatBytes(att.size)})`;
+    link.onclick = (e) => { e.preventDefault(); downloadAttachment(att); };
+    container.appendChild(link);
+  }
+}
+
+// ============================================================
+// Render
+// ============================================================
+function render() {
+  const app = document.getElementById('app');
+
+  if (!state.account) {
+    app.innerHTML = renderLogin();
+    // Bind events
+    bindLoginEvents();
+    return;
+  }
+
+  app.innerHTML = renderMain();
+  bindMainEvents();
+}
+
+function renderLogin() {
+  return `
+    <div class="login-screen">
+      <div style="margin-bottom: 40px;">
+        <div class="logo-text" style="font-size: 1.6em; letter-spacing: 0.06em;">
+          IMPOSSIBLE<span class="dot">.</span> DRINKS
+        </div>
+        <div style="color: var(--text-muted); font-size: 0.85em; margin-top: 4px;">Invoice Finder</div>
+      </div>
+      <h2>Facturen zoeken in Exchange</h2>
+      <p>Log in met je Microsoft-account om alle mailboxen te doorzoeken op ontbrekende facturen.</p>
+
+      <details class="msal-config" style="max-width: 500px; width: 100%; margin-bottom: 24px; text-align: left;" open>
+        <summary>Azure AD Configuratie</summary>
+        <div class="fields">
+          <div>
+            <label>Client ID (Application ID)</label>
+            <input id="cfg-client" type="text" value="${state.clientId}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+          </div>
+          <div>
+            <label>Tenant ID</label>
+            <input id="cfg-tenant" type="text" value="${state.tenantId}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+          </div>
+          <div class="full">
+            <label>Redirect URI</label>
+            <input id="cfg-redirect" type="text" value="${state.redirectUri}" placeholder="${location.origin}">
+          </div>
+          <div class="full" style="font-size: 0.75em; color: var(--text-muted); line-height: 1.6;">
+            <strong>Benodigde API permissions (Delegated):</strong><br>
+            Mail.Read.All · User.Read.All · Mail.ReadWrite<br>
+            <em>Admin consent vereist voor Mail.Read.All en User.Read.All</em>
+          </div>
+        </div>
+      </details>
+
+      <button class="btn btn-primary" id="btn-login">
+        <svg width="16" height="16" viewBox="0 0 21 21" fill="currentColor"><path d="M0 0h10v10H0zM11 0h10v10H11zM0 11h10v10H0zM11 11h10v10H11z"/></svg>
+        Inloggen met Microsoft
+      </button>
+      <div style="margin-top: 16px;">
+        <button class="btn" id="btn-demo" style="border-color: var(--accent-dim); color: var(--accent);">
+          ▶ Demo modus — zonder login
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderMain() {
+  const foundCount = Object.values(state.results).filter(r => r.found).length;
+  const notFoundCount = Object.values(state.results).filter(r => !r.found).length;
+  const totalSearched = Object.keys(state.results).length;
+
+  return `
+    ${state.demoMode ? `<div style="background:var(--accent-bg);border:1px solid var(--accent-dim);border-radius:var(--radius);padding:10px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:0.85em;">
+      <span style="font-size:1.2em;">🎭</span>
+      <span><strong style="color:var(--accent)">Demo modus</strong> — alle data is fictief. Zoekresultaten en bijlagen worden gesimuleerd.</span>
+    </div>` : ''}
+    <div class="header">
+      <h1>
+        <span class="logo-text">IMPOSSIBLE<span class="dot">.</span></span>
+        Invoice Finder
+      </h1>
+      <div class="header-right">
+        <div class="user-badge">
+          <span class="indicator"></span>
+          ${state.account.username}
+          ${state.demoMode ? '<span style="color:var(--accent);font-weight:600;margin-left:4px">DEMO</span>' : ''}
+          ${state.users.length ? `<span style="color:var(--text-muted)">· ${state.users.length} mailboxen</span>` : ''}
+        </div>
+        <button class="btn btn-sm" id="btn-logout">${state.demoMode ? 'Demo sluiten' : 'Uitloggen'}</button>
+      </div>
+    </div>
+
+    <!-- MSAL Config (collapsed) -->
+    <details class="msal-config">
+      <summary>Azure AD Configuratie</summary>
+      <div class="fields">
+        <div>
+          <label>Client ID</label>
+          <input type="text" value="${state.clientId}" disabled style="opacity:0.5">
+        </div>
+        <div>
+          <label>Tenant ID</label>
+          <input type="text" value="${state.tenantId}" disabled style="opacity:0.5">
+        </div>
+      </div>
+    </details>
+
+    <!-- Upload -->
+    <div class="upload-zone" id="upload-zone">
+      <div class="icon">📄</div>
+      <p>${state.fileName
+        ? `<span class="filename">${state.fileName}</span><br>${state.invoices.length} regels geladen — klik om te vervangen`
+        : 'Sleep hier het Excel-bestand van je boekhouder<br>of klik om te selecteren'
+      }</p>
+      <input type="file" id="file-input" accept=".xlsx,.xls,.csv" style="display:none">
+    </div>
+
+    <!-- Config -->
+    <div class="config-panel">
+      <div class="config-section">
+        <label>Zoekbereik</label>
+        <select id="search-scope">
+          <option value="all" ${state.searchScope === 'all' ? 'selected' : ''}>Alle mailboxen (${state.users.length})</option>
+          <option value="me" ${state.searchScope === 'me' ? 'selected' : ''}>Alleen mijn mailbox</option>
+        </select>
+      </div>
+      <div class="config-section">
+        <label>Handmatig zoeken</label>
+        <div class="inline-input">
+          <input type="text" id="manual-query" placeholder="Factuurnr, bedrijfsnaam, etc." value="${state.manualQuery}">
+          <button class="btn btn-sm" id="btn-manual-search" ${!state.accessToken ? 'disabled' : ''}>Zoek</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="search-actions" style="margin-bottom: 20px;">
+      <button class="btn btn-primary" id="btn-search-all"
+        ${state.invoices.length === 0 || state.isSearching ? 'disabled' : ''}>
+        ${state.isSearching ? 'Zoeken…' : `Alle ${state.invoices.length} regels doorzoeken`}
+      </button>
+      ${state.isSearching ? `<span style="color:var(--text-dim);font-size:0.85em">${Math.round(state.searchProgress)}%</span>` : ''}
+    </div>
+
+    <!-- Progress -->
+    ${state.isSearching ? `
+      <div class="progress-bar">
+        <div class="fill" style="width:${state.searchProgress}%"></div>
+      </div>
+    ` : ''}
+
+    <!-- Stats -->
+    ${totalSearched > 0 ? `
+      <div class="stats-row">
+        <div class="stat"><div class="value">${totalSearched}</div><div class="label">Doorzocht</div></div>
+        <div class="stat found"><div class="value">${foundCount}</div><div class="label">Gevonden</div></div>
+        <div class="stat not-found"><div class="value">${notFoundCount}</div><div class="label">Niet gevonden</div></div>
+      </div>
+    ` : ''}
+
+    <!-- Manual results -->
+    ${state.manualResults.length > 0 ? `
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-title">Handmatige zoekresultaten (${state.manualResults.length})</div>
+        <div class="table-wrap" style="border:none;margin:0">
+          <table>
+            <thead><tr>
+              <th>Onderwerp</th><th>Van</th><th>Mailbox</th><th>Datum</th><th>Bijlagen</th>
+            </tr></thead>
+            <tbody>
+              ${state.manualResults.map((m, i) => `
+                <tr>
+                  <td>${esc(m.subject || '(geen)')}<div class="mail-snippet">${esc(m.bodyPreview?.substring(0, 80) || '')}</div></td>
+                  <td class="mono">${esc(m.from?.emailAddress?.address || '')}</td>
+                  <td class="mono" style="font-size:0.75em">${esc(m._mailbox || '')}</td>
+                  <td style="white-space:nowrap">${formatDate(m.receivedDateTime)}</td>
+                  <td>
+                    <div class="attachment-list">
+                      ${m.hasAttachments
+                        ? `<button class="btn btn-sm" onclick="showAttachments('${m._mailbox}','${m.id}',this)">📎 Ophalen</button>`
+                        : '<span style="color:var(--text-muted);font-size:0.8em">—</span>'}
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Invoice table -->
+    ${state.invoices.length > 0 ? `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px">#</th>
+              <th>Omschrijving</th>
+              <th>Zoektermen</th>
+              <th>Datum</th>
+              <th style="text-align:right">Bedrag</th>
+              <th>Status</th>
+              <th>Resultaten</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.invoices.map((inv, i) => {
+              const r = state.results[i];
+              const statusClass = !r ? 'pending' : (r.found ? 'found' : 'not-found');
+              const statusLabel = !r ? 'Wachtend' : (r.found ? `${r.mails.length} gevonden` : 'Niet gevonden');
+              const terms = inv.searchTerms || [];
+              return `
+                <tr class="${r ? (r.found ? 'found' : 'not-found') : ''}">
+                  <td style="color:var(--text-muted)">${i + 1}</td>
+                  <td style="max-width:220px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(inv.omschrijving)}">${esc(inv.omschrijving)}</div></td>
+                  <td style="min-width:200px;max-width:280px">
+                    <div class="search-tags" id="tags-${i}">
+                      ${terms.map((t, ti) => `
+                        <span class="search-tag" title="${esc(t)}">
+                          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">${esc(t)}</span>
+                          <span class="remove-tag" onclick="removeSearchTerm(${i},${ti})">×</span>
+                        </span>
+                      `).join('')}
+                      <button class="tag-add-btn" onclick="showTagInput(${i})" title="Zoekterm toevoegen">+</button>
+                    </div>
+                  </td>
+                  <td style="white-space:nowrap">${inv.datum}</td>
+                  <td style="text-align:right;white-space:nowrap" class="mono">${formatCurrency(inv.bedrag)}</td>
+                  <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+                  <td>
+                    ${r && r.mails.length > 0 ? r.mails.map(m => `
+                      <div style="margin-bottom:6px;font-size:0.8em;">
+                        <strong>${esc(m.subject?.substring(0, 50) || '(geen)')}</strong>
+                        <span style="color:var(--text-muted)"> — ${esc(m.from?.emailAddress?.address || '')}</span>
+                        ${m._matchedTerm ? `<span class="mono" style="color:var(--accent);font-size:0.85em;margin-left:4px;">[${esc(m._matchedTerm)}]</span>` : ''}
+                        <div class="attachment-list">
+                          ${m.hasAttachments
+                            ? `<button class="btn btn-sm" onclick="showAttachments('${m._mailbox}','${m.id}',this)">📎 Bijlagen</button>`
+                            : ''}
+                        </div>
+                      </div>
+                    `).join('') : ''}
+                  </td>
+                  <td>
+                    <button class="btn btn-sm" onclick="searchSingleInvoice(${i})" ${state.isSearching ? 'disabled' : ''}>🔍</button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : `
+      <div class="empty-state">
+        <div class="icon">📋</div>
+        <p>Upload het Excel-bestand van je boekhouder om te beginnen</p>
+      </div>
+    `}
+
+    <!-- Log panel -->
+    ${state.logs.length > 0 ? `
+      <div class="card" style="margin-top:20px">
+        <div class="card-title">Log</div>
+        <div class="log-panel" id="log-panel">
+          ${state.logs.map(l => `<div class="log-entry ${l.type}"><span style="color:var(--text-muted)">[${l.ts}]</span> ${esc(l.msg)}</div>`).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ============================================================
+// Event binding
+// ============================================================
+function bindLoginEvents() {
+  const cfgClient = document.getElementById('cfg-client');
+  const cfgTenant = document.getElementById('cfg-tenant');
+  const cfgRedirect = document.getElementById('cfg-redirect');
+
+  if (cfgClient) cfgClient.addEventListener('input', e => { state.clientId = e.target.value.trim(); });
+  if (cfgTenant) cfgTenant.addEventListener('input', e => { state.tenantId = e.target.value.trim(); });
+  if (cfgRedirect) cfgRedirect.addEventListener('input', e => { state.redirectUri = e.target.value.trim(); });
+
+  const btn = document.getElementById('btn-login');
+  if (btn) btn.addEventListener('click', () => {
+    initMsal();
+    login();
+  });
+
+  const btnDemo = document.getElementById('btn-demo');
+  if (btnDemo) btnDemo.addEventListener('click', activateDemo);
+}
+
+function bindMainEvents() {
+  document.getElementById('btn-logout')?.addEventListener('click', () => {
+    if (state.demoMode) {
+      state.demoMode = false; state.account = null; state.accessToken = null;
+      state.users = []; state.invoices = []; state.results = {};
+      state.logs = []; state.fileName = null; state.manualResults = [];
+      render();
+    } else { logout(); }
+  });
+  document.getElementById('btn-search-all')?.addEventListener('click', () => {
+    state.demoMode ? demoSearchAll() : searchAllInvoices();
+  });
+  document.getElementById('btn-manual-search')?.addEventListener('click', () => {
+    state.demoMode ? demoSearchManual() : searchManual();
+  });
+
+  const manualInput = document.getElementById('manual-query');
+  if (manualInput) {
+    manualInput.addEventListener('input', e => { state.manualQuery = e.target.value; });
+    manualInput.addEventListener('keydown', e => { if (e.key === 'Enter') { state.demoMode ? demoSearchManual() : searchManual(); } });
+  }
+
+  document.getElementById('search-scope')?.addEventListener('change', e => {
+    state.searchScope = e.target.value;
+  });
+
+  // File upload
+  const zone = document.getElementById('upload-zone');
+  const fileInput = document.getElementById('file-input');
+  if (zone && fileInput) {
+    zone.addEventListener('click', () => fileInput.click());
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault(); zone.classList.remove('dragover');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', e => {
+      if (e.target.files.length) handleFile(e.target.files[0]);
+    });
+  }
+
+  // Scroll log to bottom
+  const logPanel = document.getElementById('log-panel');
+  if (logPanel) logPanel.scrollTop = logPanel.scrollHeight;
+}
+
+// Make functions globally accessible for onclick handlers
+window.showAttachments = function(mailbox, messageId, btnEl) {
+  state.demoMode ? demoShowAttachments(mailbox, messageId, btnEl) : showAttachments(mailbox, messageId, btnEl);
+};
+window.searchSingleInvoice = function(idx) {
+  state.demoMode ? demoSearchSingle(idx) : searchSingleInvoice(idx);
+};
+window.removeSearchTerm = function(invIdx, termIdx) {
+  if (state.invoices[invIdx]) {
+    state.invoices[invIdx].searchTerms.splice(termIdx, 1);
+    render();
+  }
+};
+window.showTagInput = function(invIdx) {
+  const container = document.getElementById('tags-' + invIdx);
+  if (!container || container.querySelector('.tag-input-wrap')) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'tag-input-wrap';
+  wrap.innerHTML = `<input type="text" placeholder="Factuurnr, bedrijf…" autofocus>`;
+  container.appendChild(wrap);
+  const input = wrap.querySelector('input');
+  input.focus();
+  const addTerm = () => {
+    const val = input.value.trim();
+    if (val && state.invoices[invIdx]) {
+      // Support comma-separated input
+      const newTerms = val.split(',').map(t => t.trim()).filter(Boolean);
+      state.invoices[invIdx].searchTerms.push(...newTerms);
+      render();
+    } else {
+      wrap.remove();
+    }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addTerm(); }
+    if (e.key === 'Escape') { wrap.remove(); }
+  });
+  input.addEventListener('blur', () => { setTimeout(addTerm, 150); });
+};
+
+// ============================================================
+// Try restore from session
+// ============================================================
+try {
+  const saved = sessionStorage.getItem('impossible-invoice-finder-config');
+  if (saved) {
+    const cfg = JSON.parse(saved);
+    state.clientId = cfg.clientId || '';
+    state.tenantId = cfg.tenantId || '';
+    if (cfg.redirectUri) state.redirectUri = cfg.redirectUri;
+  }
+} catch(e) {}
+
+// Save config on changes
+const origRender = render;
+render = function() {
+  try {
+    sessionStorage.setItem('impossible-invoice-finder-config', JSON.stringify({
+      clientId: state.clientId, tenantId: state.tenantId, redirectUri: state.redirectUri
+    }));
+  } catch(e) {}
+  origRender();
+};
+
+// Initial render
+render();
+</script>
+</body>
+</html>
