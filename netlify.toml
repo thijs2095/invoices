@@ -1,0 +1,3 @@
+[build]
+  publish = "."
+  command = "echo \"window.NETLIFY_CONFIG = { clientId: '$AZURE_CLIENT_ID', tenantId: '$AZURE_TENANT_ID' };\" > config.js"

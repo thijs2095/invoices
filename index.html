@@ -116,30 +116,6 @@
     border-color: var(--accent-dim);
   }
 
-  /* MSAL Config */
-  .msal-config {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius-lg); padding: 20px; margin-bottom: 24px;
-  }
-  .msal-config summary {
-    cursor: pointer; font-size: 0.82em; color: var(--text-dim);
-    font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
-  }
-  .msal-config .fields {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px;
-  }
-  .msal-config .fields .full { grid-column: 1 / -1; }
-  .msal-config label {
-    display: block; font-size: 0.78em; color: var(--text-muted); margin-bottom: 4px;
-  }
-  .msal-config input {
-    width: 100%; padding: 8px 10px; border-radius: var(--radius);
-    border: 1px solid var(--border); background: var(--bg);
-    color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 0.82em;
-    outline: none;
-  }
-  .msal-config input:focus { border-color: var(--accent-dim); }
-
   /* Upload zone */
   .upload-zone {
     border: 2px dashed var(--border); border-radius: var(--radius-lg);
@@ -325,6 +301,8 @@
 
 <div class="app" id="app"></div>
 
+<!-- Config from Netlify environment variables -->
+<script src="config.js"></script>
 <!-- MSAL 2.x browser -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-authentication-library-js/2.38.3/msal-browser.min.js"></script>
 
@@ -336,9 +314,9 @@ const state = {
   msalInstance: null,
   account: null,
   accessToken: null,
-  // MSAL config
-  clientId: '',
-  tenantId: '',
+  // MSAL config (from Netlify env vars via config.js)
+  clientId: window.NETLIFY_CONFIG?.clientId || '',
+  tenantId: window.NETLIFY_CONFIG?.tenantId || '',
   redirectUri: location.origin + location.pathname,
   // Data
   invoices: [],
@@ -352,8 +330,6 @@ const state = {
   // manual search
   manualQuery: '',
   manualResults: [],
-  // demo
-  demoMode: false,
 };
 
 // ============================================================
@@ -402,7 +378,7 @@ const SCOPES = ['Mail.ReadWrite', 'User.Read.All', 'Mail.Read.All'];
 
 async function login() {
   if (!state.msalInstance) {
-    alert('Configureer eerst Client ID en Tenant ID');
+    alert('Azure configuratie ontbreekt. Controleer de Netlify environment variabelen.');
     return;
   }
   try {
@@ -689,16 +665,13 @@ async function searchManual() {
 // ============================================================
 async function fetchAttachments(mailboxId, messageId) {
   try {
-    const endpoint = mailboxId === 'me' || mailboxId === state.account?.username
-      ? `/me/messages/${messageId}/attachments`
-      : `/users/${mailboxId}/messages/${messageId}/attachments`;
     // Find user id from email
     let uid = mailboxId;
     if (mailboxId !== 'me') {
       const user = state.users.find(u => u.mail === mailboxId);
       if (user) uid = user.id;
     }
-    const actualEndpoint = uid === 'me'
+    const actualEndpoint = uid === 'me' || mailboxId === state.account?.username
       ? `/me/messages/${messageId}/attachments`
       : `/users/${uid}/messages/${messageId}/attachments`;
 
@@ -763,194 +736,6 @@ function formatCurrency(n) {
 }
 
 // ============================================================
-// Demo Mode
-// ============================================================
-const DEMO_INVOICES = [
-  { idx:1, dagboek:'Dagboek credit card afschriften', datum:'2024-04-03', omschrijving:'Transavia', bedrag:60, searchTerms:['Transavia'] },
-  { idx:2, dagboek:'Dagboek credit card afschriften', datum:'2024-04-05', omschrijving:'Mac Carthy', bedrag:100, searchTerms:['Mac Carthy'] },
-  { idx:3, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-04-08', omschrijving:'Fitmart GmbH Co. KG', bedrag:44.74, searchTerms:['Fitmart GmbH'] },
-  { idx:4, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-04-19', omschrijving:'Goese Golf B.V. Bernardus rose', bedrag:4452.50, searchTerms:['Goese Golf', '24011822'] },
-  { idx:5, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-04-25', omschrijving:'Wijnhuis Rosmalen', bedrag:4510.37, searchTerms:['Wijnhuis Rosmalen'] },
-  { idx:6, dagboek:'Dagboek credit card afschriften', datum:'2024-04-28', omschrijving:'INTUIT MAILCHIMP', bedrag:12.24, searchTerms:['INTUIT MAILCHIMP'] },
-  { idx:7, dagboek:'Dagboek credit card afschriften', datum:'2024-05-10', omschrijving:'AIRBNB * HMPTATFNKQ', bedrag:84.81, searchTerms:['AIRBNB'] },
-  { idx:8, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-05-23', omschrijving:'Frans van den Hoogen Wijnkoopers', bedrag:329.75, searchTerms:['Frans van den Hoogen', 'ORD01370'] },
-  { idx:9, dagboek:'Dagboek credit card afschriften', datum:'2024-05-30', omschrijving:'LinkedIn', bedrag:124.48, searchTerms:['LinkedIn'] },
-  { idx:10, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-06-06', omschrijving:'Goese Golf B.V. 4930', bedrag:1875.50, searchTerms:['Goese Golf', '4930'] },
-  { idx:11, dagboek:'Dagboek credit card afschriften', datum:'2024-06-17', omschrijving:'Vignapart', bedrag:740, searchTerms:['Vignapart'] },
-  { idx:12, dagboek:'Dagboek credit card afschriften', datum:'2024-06-18', omschrijving:'Gusto e Tradizione Sig', bedrag:834.23, searchTerms:['Gusto e Tradizione'] },
-  { idx:13, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-07-09', omschrijving:'MP Wines C.V.', bedrag:1115.70, searchTerms:['MP Wines'] },
-  { idx:14, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-07-24', omschrijving:'LXA Advocaten 202400990', bedrag:545.21, searchTerms:['LXA Advocaten', '202400990'] },
-  { idx:15, dagboek:'Dagboek credit card afschriften', datum:'2024-08-06', omschrijving:'Excellencerhum', bedrag:399.94, searchTerms:['Excellencerhum'] },
-  { idx:16, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-08-22', omschrijving:'DHL Express IXOPAY Online', bedrag:4079.53, searchTerms:['DHL Express'] },
-  { idx:17, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-08-26', omschrijving:'MP Wines C.V. 2024089', bedrag:20430, searchTerms:['MP Wines', '2024089'] },
-  { idx:18, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-08-27', omschrijving:'Somm Times 24700465', bedrag:2221.56, searchTerms:['Somm Times', '24700465'] },
-  { idx:19, dagboek:'Dagboek credit card afschriften', datum:'2024-08-27', omschrijving:'Vueling', bedrag:91.99, searchTerms:['Vueling'] },
-  { idx:20, dagboek:'Zakelijke rekening NL38 ABNA', datum:'2024-08-30', omschrijving:'Drankdozijn.nl', bedrag:199.98, searchTerms:['Drankdozijn'] },
-];
-
-const DEMO_USERS = [
-  { id:'u1', displayName:'Thijs van der Berg', mail:'thijs@impossible-drinks.com', userPrincipalName:'thijs@impossible-drinks.com' },
-  { id:'u2', displayName:'Info', mail:'info@impossible-drinks.com', userPrincipalName:'info@impossible-drinks.com' },
-  { id:'u3', displayName:'Orders', mail:'orders@impossible-drinks.com', userPrincipalName:'orders@impossible-drinks.com' },
-];
-
-const DEMO_SENDERS = [
-  'facturen@goesegolf.nl', 'info@wijnhuisrosmalen.nl', 'noreply@transavia.com',
-  'billing@mailchimp.com', 'invoices@dhl.com', 'info@mpwines.nl',
-  'admin@lxa.nl', 'info@vignapart.it', 'orders@excellencerhum.com',
-  'accounting@sommtimes.nl', 'noreply@linkedin.com', 'invoicing@airbnb.com',
-  'billing@vueling.com', 'factuur@drankdozijn.nl', 'info@fitmart.de',
-  'noreply@gustoetradizione.it', 'info@fransvdhoogen.nl', 'receipt@maccarthy.ie',
-];
-
-function demoMakeMail(inv, mailboxIdx) {
-  const hasAtt = Math.random() > 0.3;
-  const sender = DEMO_SENDERS[Math.floor(Math.random() * DEMO_SENDERS.length)];
-  const mailbox = DEMO_USERS[mailboxIdx % DEMO_USERS.length];
-  const subjectPrefixes = ['Factuur ', 'Invoice ', 'Rekening ', 'Bevestiging betaling ', 'Order bevestiging '];
-  const label = (inv.searchTerms || [])[0] || inv.omschrijving;
-  const subject = subjectPrefixes[Math.floor(Math.random() * subjectPrefixes.length)] + label;
-  const d = new Date(inv.datum);
-  d.setDate(d.getDate() - Math.floor(Math.random() * 10));
-  const safeName = label.replace(/\s+/g,'_');
-  return {
-    id: 'demo-' + Math.random().toString(36).substring(2, 10),
-    subject,
-    from: { emailAddress: { address: sender, name: sender.split('@')[0] } },
-    receivedDateTime: d.toISOString(),
-    hasAttachments: hasAtt,
-    bodyPreview: `Geachte klant, hierbij ontvangt u de factuur voor ${label}. Bedrag: €${inv.bedrag.toFixed(2)}. Met vriendelijke groet.`,
-    _mailbox: mailbox.mail,
-    _matchedTerm: label,
-    _demoAttachments: hasAtt ? [
-      { name: `Factuur_${safeName}_${inv.datum}.pdf`, size: Math.floor(Math.random()*400000)+50000, contentType:'application/pdf', contentBytes: btoa('Demo PDF content for ' + label), '@odata.type':'#microsoft.graph.fileAttachment' },
-      ...(Math.random() > 0.6 ? [{ name: `Bijlage_${safeName}.xlsx`, size: Math.floor(Math.random()*200000)+20000, contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', contentBytes: btoa('Demo Excel for ' + label), '@odata.type':'#microsoft.graph.fileAttachment' }] : []),
-    ] : [],
-  };
-}
-
-function activateDemo() {
-  state.demoMode = true;
-  state.account = { username: 'thijs@impossible-drinks.com', name: 'Thijs (DEMO)' };
-  state.accessToken = 'demo-token';
-  state.users = DEMO_USERS;
-  // Deep copy demo invoices so edits don't mutate the template
-  state.invoices = DEMO_INVOICES.map(inv => ({ ...inv, searchTerms: [...inv.searchTerms] }));
-  state.fileName = 'Impossible_JR2024_ontbrekende_facturen.xlsx (demo)';
-  state.results = {};
-  log('Demo modus geactiveerd', 'success');
-  log(`${DEMO_INVOICES.length} demo-regels geladen`, 'info');
-  log(`${DEMO_USERS.length} mailboxen gevonden`, 'success');
-  render();
-}
-
-async function demoSearchAll() {
-  state.isSearching = true;
-  state.searchProgress = 0;
-  state.results = {};
-  render();
-
-  for (let i = 0; i < state.invoices.length; i++) {
-    const inv = state.invoices[i];
-    state.searchProgress = ((i + 1) / state.invoices.length) * 100;
-    const terms = inv.searchTerms || [];
-    log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
-
-    // Simulate delay
-    await new Promise(r => setTimeout(r, 300 + Math.random() * 400));
-
-    // ~65% chance of finding something
-    const found = Math.random() > 0.35;
-    const mails = [];
-    if (found) {
-      const count = Math.random() > 0.6 ? 2 : 1;
-      for (let j = 0; j < count; j++) {
-        mails.push(demoMakeMail(inv, j));
-      }
-    }
-    state.results[i] = { found, mails };
-    render();
-  }
-
-  state.isSearching = false;
-  const foundCount = Object.values(state.results).filter(r => r.found).length;
-  log(`Klaar! ${foundCount}/${state.invoices.length} facturen gevonden`, 'success');
-  render();
-}
-
-async function demoSearchSingle(idx) {
-  const inv = state.invoices[idx];
-  if (!inv) return;
-  const terms = inv.searchTerms || [];
-  log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
-  await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
-  const found = Math.random() > 0.25;
-  const mails = found ? [demoMakeMail(inv, 0)] : [];
-  state.results[idx] = { found, mails };
-  log(found ? `${mails.length} mails gevonden` : 'Geen resultaten', found ? 'success' : 'error');
-  render();
-}
-
-async function demoSearchManual() {
-  if (!state.manualQuery) return;
-  log(`Handmatig zoeken: "${state.manualQuery}"`, 'info');
-  await new Promise(r => setTimeout(r, 600));
-  state.manualResults = [];
-  const count = Math.floor(Math.random() * 4) + 1;
-  for (let i = 0; i < count; i++) {
-    const hasAtt = Math.random() > 0.4;
-    const sender = DEMO_SENDERS[Math.floor(Math.random() * DEMO_SENDERS.length)];
-    const mailbox = DEMO_USERS[Math.floor(Math.random() * DEMO_USERS.length)];
-    const d = new Date('2024-06-01');
-    d.setDate(d.getDate() + Math.floor(Math.random() * 180));
-    state.manualResults.push({
-      id: 'demo-manual-' + i,
-      subject: `Re: ${state.manualQuery} — factuur / bevestiging`,
-      from: { emailAddress: { address: sender } },
-      receivedDateTime: d.toISOString(),
-      hasAttachments: hasAtt,
-      bodyPreview: `Betreft: ${state.manualQuery}. Zie bijgevoegd de gevraagde documenten.`,
-      _mailbox: mailbox.mail,
-      _demoAttachments: hasAtt ? [
-        { name: `${state.manualQuery.replace(/\s+/g,'_')}.pdf`, size: 125000, contentType:'application/pdf', contentBytes: btoa('Demo'), '@odata.type':'#microsoft.graph.fileAttachment' }
-      ] : [],
-    });
-  }
-  log(`${state.manualResults.length} resultaten gevonden`, 'success');
-  render();
-}
-
-async function demoShowAttachments(mailbox, messageId, btnEl) {
-  btnEl.disabled = true;
-  btnEl.textContent = 'Laden…';
-  await new Promise(r => setTimeout(r, 400));
-
-  // Find the demo mail across all results + manual results
-  let mail = null;
-  for (const r of Object.values(state.results)) {
-    if (r.mails) mail = r.mails.find(m => m.id === messageId);
-    if (mail) break;
-  }
-  if (!mail) mail = state.manualResults.find(m => m.id === messageId);
-  const atts = mail?._demoAttachments || [];
-
-  if (atts.length === 0) {
-    btnEl.textContent = 'Geen bijlagen';
-    return;
-  }
-  const container = btnEl.parentElement;
-  btnEl.style.display = 'none';
-  for (const att of atts) {
-    const link = document.createElement('a');
-    link.className = 'attachment-item';
-    link.href = '#';
-    link.textContent = `📎 ${att.name} (${formatBytes(att.size)})`;
-    link.onclick = (e) => { e.preventDefault(); downloadAttachment(att); };
-    container.appendChild(link);
-  }
-}
-
-// ============================================================
 // Render
 // ============================================================
 function render() {
@@ -958,7 +743,6 @@ function render() {
 
   if (!state.account) {
     app.innerHTML = renderLogin();
-    // Bind events
     bindLoginEvents();
     return;
   }
@@ -979,38 +763,10 @@ function renderLogin() {
       <h2>Facturen zoeken in Exchange</h2>
       <p>Log in met je Microsoft-account om alle mailboxen te doorzoeken op ontbrekende facturen.</p>
 
-      <details class="msal-config" style="max-width: 500px; width: 100%; margin-bottom: 24px; text-align: left;" open>
-        <summary>Azure AD Configuratie</summary>
-        <div class="fields">
-          <div>
-            <label>Client ID (Application ID)</label>
-            <input id="cfg-client" type="text" value="${state.clientId}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-          </div>
-          <div>
-            <label>Tenant ID</label>
-            <input id="cfg-tenant" type="text" value="${state.tenantId}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-          </div>
-          <div class="full">
-            <label>Redirect URI</label>
-            <input id="cfg-redirect" type="text" value="${state.redirectUri}" placeholder="${location.origin}">
-          </div>
-          <div class="full" style="font-size: 0.75em; color: var(--text-muted); line-height: 1.6;">
-            <strong>Benodigde API permissions (Delegated):</strong><br>
-            Mail.Read.All · User.Read.All · Mail.ReadWrite<br>
-            <em>Admin consent vereist voor Mail.Read.All en User.Read.All</em>
-          </div>
-        </div>
-      </details>
-
       <button class="btn btn-primary" id="btn-login">
         <svg width="16" height="16" viewBox="0 0 21 21" fill="currentColor"><path d="M0 0h10v10H0zM11 0h10v10H11zM0 11h10v10H0zM11 11h10v10H11z"/></svg>
         Inloggen met Microsoft
       </button>
-      <div style="margin-top: 16px;">
-        <button class="btn" id="btn-demo" style="border-color: var(--accent-dim); color: var(--accent);">
-          ▶ Demo modus — zonder login
-        </button>
-      </div>
     </div>
   `;
 }
@@ -1021,10 +777,6 @@ function renderMain() {
   const totalSearched = Object.keys(state.results).length;
 
   return `
-    ${state.demoMode ? `<div style="background:var(--accent-bg);border:1px solid var(--accent-dim);border-radius:var(--radius);padding:10px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:0.85em;">
-      <span style="font-size:1.2em;">🎭</span>
-      <span><strong style="color:var(--accent)">Demo modus</strong> — alle data is fictief. Zoekresultaten en bijlagen worden gesimuleerd.</span>
-    </div>` : ''}
     <div class="header">
       <h1>
         <span class="logo-text">IMPOSSIBLE<span class="dot">.</span></span>
@@ -1034,27 +786,11 @@ function renderMain() {
         <div class="user-badge">
           <span class="indicator"></span>
           ${state.account.username}
-          ${state.demoMode ? '<span style="color:var(--accent);font-weight:600;margin-left:4px">DEMO</span>' : ''}
           ${state.users.length ? `<span style="color:var(--text-muted)">· ${state.users.length} mailboxen</span>` : ''}
         </div>
-        <button class="btn btn-sm" id="btn-logout">${state.demoMode ? 'Demo sluiten' : 'Uitloggen'}</button>
+        <button class="btn btn-sm" id="btn-logout">Uitloggen</button>
       </div>
     </div>
-
-    <!-- MSAL Config (collapsed) -->
-    <details class="msal-config">
-      <summary>Azure AD Configuratie</summary>
-      <div class="fields">
-        <div>
-          <label>Client ID</label>
-          <input type="text" value="${state.clientId}" disabled style="opacity:0.5">
-        </div>
-        <div>
-          <label>Tenant ID</label>
-          <input type="text" value="${state.tenantId}" disabled style="opacity:0.5">
-        </div>
-      </div>
-    </details>
 
     <!-- Upload -->
     <div class="upload-zone" id="upload-zone">
@@ -1233,44 +969,19 @@ function esc(s) {
 // Event binding
 // ============================================================
 function bindLoginEvents() {
-  const cfgClient = document.getElementById('cfg-client');
-  const cfgTenant = document.getElementById('cfg-tenant');
-  const cfgRedirect = document.getElementById('cfg-redirect');
-
-  if (cfgClient) cfgClient.addEventListener('input', e => { state.clientId = e.target.value.trim(); });
-  if (cfgTenant) cfgTenant.addEventListener('input', e => { state.tenantId = e.target.value.trim(); });
-  if (cfgRedirect) cfgRedirect.addEventListener('input', e => { state.redirectUri = e.target.value.trim(); });
-
   const btn = document.getElementById('btn-login');
-  if (btn) btn.addEventListener('click', () => {
-    initMsal();
-    login();
-  });
-
-  const btnDemo = document.getElementById('btn-demo');
-  if (btnDemo) btnDemo.addEventListener('click', activateDemo);
+  if (btn) btn.addEventListener('click', () => { login(); });
 }
 
 function bindMainEvents() {
-  document.getElementById('btn-logout')?.addEventListener('click', () => {
-    if (state.demoMode) {
-      state.demoMode = false; state.account = null; state.accessToken = null;
-      state.users = []; state.invoices = []; state.results = {};
-      state.logs = []; state.fileName = null; state.manualResults = [];
-      render();
-    } else { logout(); }
-  });
-  document.getElementById('btn-search-all')?.addEventListener('click', () => {
-    state.demoMode ? demoSearchAll() : searchAllInvoices();
-  });
-  document.getElementById('btn-manual-search')?.addEventListener('click', () => {
-    state.demoMode ? demoSearchManual() : searchManual();
-  });
+  document.getElementById('btn-logout')?.addEventListener('click', () => { logout(); });
+  document.getElementById('btn-search-all')?.addEventListener('click', () => { searchAllInvoices(); });
+  document.getElementById('btn-manual-search')?.addEventListener('click', () => { searchManual(); });
 
   const manualInput = document.getElementById('manual-query');
   if (manualInput) {
     manualInput.addEventListener('input', e => { state.manualQuery = e.target.value; });
-    manualInput.addEventListener('keydown', e => { if (e.key === 'Enter') { state.demoMode ? demoSearchManual() : searchManual(); } });
+    manualInput.addEventListener('keydown', e => { if (e.key === 'Enter') { searchManual(); } });
   }
 
   document.getElementById('search-scope')?.addEventListener('change', e => {
@@ -1299,12 +1010,8 @@ function bindMainEvents() {
 }
 
 // Make functions globally accessible for onclick handlers
-window.showAttachments = function(mailbox, messageId, btnEl) {
-  state.demoMode ? demoShowAttachments(mailbox, messageId, btnEl) : showAttachments(mailbox, messageId, btnEl);
-};
-window.searchSingleInvoice = function(idx) {
-  state.demoMode ? demoSearchSingle(idx) : searchSingleInvoice(idx);
-};
+window.showAttachments = showAttachments;
+window.searchSingleInvoice = searchSingleInvoice;
 window.removeSearchTerm = function(invIdx, termIdx) {
   if (state.invoices[invIdx]) {
     state.invoices[invIdx].searchTerms.splice(termIdx, 1);
@@ -1339,30 +1046,9 @@ window.showTagInput = function(invIdx) {
 };
 
 // ============================================================
-// Try restore from session
+// Init
 // ============================================================
-try {
-  const saved = sessionStorage.getItem('impossible-invoice-finder-config');
-  if (saved) {
-    const cfg = JSON.parse(saved);
-    state.clientId = cfg.clientId || '';
-    state.tenantId = cfg.tenantId || '';
-    if (cfg.redirectUri) state.redirectUri = cfg.redirectUri;
-  }
-} catch(e) {}
-
-// Save config on changes
-const origRender = render;
-render = function() {
-  try {
-    sessionStorage.setItem('impossible-invoice-finder-config', JSON.stringify({
-      clientId: state.clientId, tenantId: state.tenantId, redirectUri: state.redirectUri
-    }));
-  } catch(e) {}
-  origRender();
-};
-
-// Initial render
+initMsal();
 render();
 </script>
 </body>
