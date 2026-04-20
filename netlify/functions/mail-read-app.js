@@ -134,12 +134,24 @@ function parseMailboxListFromEnv() {
   }));
 }
 
-async function searchMessages(accessToken, terms, mailboxes, top = 5, requestedScope = 'all', requestedExcludeLouvenberg = false) {
+async function searchMessages(
+  accessToken,
+  terms,
+  mailboxes,
+  top = 5,
+  requestedScope = 'all',
+  requestedExcludeLouvenberg = false,
+  requestedYear = 'all'
+) {
   const unique = new Map();
   const safeTop = Math.min(Math.max(Number(top) || 5, 1), 25);
   const rawScope = String(requestedScope || 'all').trim().toLowerCase();
   const searchScope = ['all', 'subject', 'from', 'body'].includes(rawScope) ? rawScope : 'all';
   const excludeLouvenberg = !!requestedExcludeLouvenberg;
+  const parsedYear = Number(requestedYear);
+  const yearFilter = Number.isInteger(parsedYear) && parsedYear >= 2000 && parsedYear <= 2100
+    ? parsedYear
+    : null;
 
   function buildAqs(term) {
     const escaped = String(term).replace(/"/g, '\\"');
@@ -166,6 +178,11 @@ async function searchMessages(accessToken, terms, mailboxes, top = 5, requestedS
       try {
         const data = await graphGet(accessToken, path, { ConsistencyLevel: 'eventual' });
         for (const m of data.value || []) {
+          if (yearFilter) {
+            const y = new Date(m.receivedDateTime).getFullYear();
+            if (y !== yearFilter) continue;
+          }
+
           const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
           if (excludeLouvenberg && fromAddress.endsWith('@louvenbergadvies.nl')) continue;
 
@@ -300,7 +317,8 @@ exports.handler = async (event) => {
         payload.mailboxes || [],
         payload.top || 5,
         payload.searchScope || 'all',
-        payload.excludeLouvenberg === true
+        payload.excludeLouvenberg === true,
+        payload.searchYear || 'all'
       );
       return { statusCode: 200, headers, body: JSON.stringify({ messages }) };
     }

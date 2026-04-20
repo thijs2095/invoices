@@ -367,6 +367,7 @@ const state = {
   fileName: null,
   manualQuery: '',
   searchScope: 'all',
+  searchYear: 'all',
   excludeLouvenberg: true,
   manualResults: [],
   backendOk: false,
@@ -605,6 +606,7 @@ async function runInvoiceSearch(inv) {
     terms,
     mailboxes,
     searchScope: state.searchScope,
+    searchYear: state.searchYear,
     excludeLouvenberg: state.excludeLouvenberg,
     top: 5
   });
@@ -631,7 +633,7 @@ async function searchAllInvoices() {
     const inv = state.invoices[i];
     state.searchProgress = ((i + 1) / state.invoices.length) * 100;
     const terms = inv.searchTerms || [];
-    log(`Zoeken (${scopeLabel(state.searchScope)}): ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
+    log(`Zoeken (${scopeLabel(state.searchScope)}, ${yearLabel(state.searchYear)}): ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
 
     try {
       state.results[i] = await runInvoiceSearch(inv);
@@ -658,7 +660,7 @@ async function searchSingleInvoice(idx) {
   }
 
   const terms = inv.searchTerms || [];
-  log(`Zoeken (${scopeLabel(state.searchScope)}): ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
+  log(`Zoeken (${scopeLabel(state.searchScope)}, ${yearLabel(state.searchYear)}): ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
   try {
     state.results[idx] = await runInvoiceSearch(inv);
     const count = state.results[idx].mails.length;
@@ -677,7 +679,7 @@ async function searchManual() {
     return;
   }
 
-  log(`Handmatig zoeken (${scopeLabel(state.searchScope)}): "${state.manualQuery}"`, 'info');
+  log(`Handmatig zoeken (${scopeLabel(state.searchScope)}, ${yearLabel(state.searchYear)}): "${state.manualQuery}"`, 'info');
   state.manualResults = [];
   render();
 
@@ -686,6 +688,7 @@ async function searchManual() {
       terms: [state.manualQuery],
       mailboxes: getSelectedMailboxes(),
       searchScope: state.searchScope,
+      searchYear: state.searchYear,
       excludeLouvenberg: state.excludeLouvenberg,
       top: 10
     });
@@ -783,6 +786,27 @@ function scopeLabel(scope) {
   if (scope === 'from') return 'Afzender';
   if (scope === 'body') return 'Body';
   return 'Alles';
+}
+
+function getYearOptions() {
+  const years = new Set();
+  const currentYear = new Date().getFullYear();
+  years.add(currentYear);
+  years.add(currentYear - 1);
+
+  for (const inv of state.invoices) {
+    const m = String(inv?.datum || '').match(/^(\d{4})/);
+    if (!m) continue;
+    years.add(Number(m[1]));
+  }
+
+  return Array.from(years)
+    .filter(y => Number.isInteger(y) && y >= 2000 && y <= 2100)
+    .sort((a, b) => b - a);
+}
+
+function yearLabel(year) {
+  return year === 'all' ? 'Alle jaren' : `Jaar ${year}`;
 }
 
 // ============================================================
@@ -907,6 +931,13 @@ function renderMain() {
             <option value="subject" ${state.searchScope === 'subject' ? 'selected' : ''}>Onderwerp</option>
             <option value="from" ${state.searchScope === 'from' ? 'selected' : ''}>Afzender</option>
             <option value="body" ${state.searchScope === 'body' ? 'selected' : ''}>Mail body</option>
+          </select>
+        </div>
+        <label>Jaarfilter</label>
+        <div class="inline-input" style="margin-bottom:10px;">
+          <select id="search-year" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit;font-size:0.88em;outline:none;">
+            <option value="all" ${state.searchYear === 'all' ? 'selected' : ''}>Alle jaren</option>
+            ${getYearOptions().map(y => `<option value="${y}" ${String(state.searchYear) === String(y) ? 'selected' : ''}>${y}</option>`).join('')}
           </select>
         </div>
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;">
@@ -1102,6 +1133,14 @@ function bindMainEvents() {
     scopeSelect.addEventListener('change', e => {
       state.searchScope = e.target.value;
       log(`Zoekveld ingesteld op: ${scopeLabel(state.searchScope)}`, 'info');
+    });
+  }
+
+  const yearSelect = document.getElementById('search-year');
+  if (yearSelect) {
+    yearSelect.addEventListener('change', e => {
+      state.searchYear = e.target.value;
+      log(`Jaarfilter ingesteld op: ${yearLabel(state.searchYear)}`, 'info');
     });
   }
 
