@@ -158,7 +158,9 @@ async function searchMessages(
   function buildAqs(term) {
     const escaped = String(term).replace(/"/g, '\\"');
     if (searchScope === 'subject') return `subject:"${escaped}"`;
-    if (searchScope === 'from') return `from:"${escaped}"`;
+    // Graph AQS `from:"..."` is often too strict for partial domain/user matches.
+    // Use a broader query and validate sender locally below.
+    if (searchScope === 'from') return `"${escaped}"`;
     if (searchScope === 'body') return `body:"${escaped}"`;
     return `"${escaped}"`;
   }
@@ -166,6 +168,7 @@ async function searchMessages(
   for (const rawTerm of terms || []) {
     const term = String(rawTerm || '').trim();
     if (!term) continue;
+    const normalizedTerm = term.toLowerCase();
     const q = encodeURIComponent(buildAqs(term));
 
     for (const rawMailbox of mailboxes || []) {
@@ -180,6 +183,14 @@ async function searchMessages(
       try {
         const data = await graphGet(accessToken, path, { ConsistencyLevel: 'eventual' });
         for (const m of data.value || []) {
+          const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
+          const fromName = String(m?.from?.emailAddress?.name || '').toLowerCase().trim();
+
+          if (searchScope === 'from') {
+            const senderMatches = fromAddress.includes(normalizedTerm) || fromName.includes(normalizedTerm);
+            if (!senderMatches) continue;
+          }
+
           if (onlyWithAttachments && !m.hasAttachments) continue;
 
           if (yearFilter) {
@@ -187,7 +198,6 @@ async function searchMessages(
             if (y !== yearFilter) continue;
           }
 
-          const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
           if (excludeLouvenberg && fromAddress.endsWith('@louvenbergadvies.nl')) continue;
 
           if (unique.has(m.id)) continue;
