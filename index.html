@@ -366,6 +366,8 @@ const state = {
   logs: [],
   fileName: null,
   manualQuery: '',
+  searchScope: 'all',
+  excludeLouvenberg: true,
   manualResults: [],
   backendOk: false,
 };
@@ -602,6 +604,8 @@ async function runInvoiceSearch(inv) {
   const data = await callApi('searchMessages', {
     terms,
     mailboxes,
+    searchScope: state.searchScope,
+    excludeLouvenberg: state.excludeLouvenberg,
     top: 5
   });
 
@@ -627,7 +631,7 @@ async function searchAllInvoices() {
     const inv = state.invoices[i];
     state.searchProgress = ((i + 1) / state.invoices.length) * 100;
     const terms = inv.searchTerms || [];
-    log(`Zoeken: ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
+    log(`Zoeken (${scopeLabel(state.searchScope)}): ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
 
     try {
       state.results[i] = await runInvoiceSearch(inv);
@@ -654,7 +658,7 @@ async function searchSingleInvoice(idx) {
   }
 
   const terms = inv.searchTerms || [];
-  log(`Zoeken: ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
+  log(`Zoeken (${scopeLabel(state.searchScope)}): ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
   try {
     state.results[idx] = await runInvoiceSearch(inv);
     const count = state.results[idx].mails.length;
@@ -673,7 +677,7 @@ async function searchManual() {
     return;
   }
 
-  log(`Handmatig zoeken: "${state.manualQuery}"`, 'info');
+  log(`Handmatig zoeken (${scopeLabel(state.searchScope)}): "${state.manualQuery}"`, 'info');
   state.manualResults = [];
   render();
 
@@ -681,6 +685,8 @@ async function searchManual() {
     const data = await callApi('searchMessages', {
       terms: [state.manualQuery],
       mailboxes: getSelectedMailboxes(),
+      searchScope: state.searchScope,
+      excludeLouvenberg: state.excludeLouvenberg,
       top: 10
     });
     state.manualResults = data.messages || [];
@@ -765,6 +771,13 @@ function formatCurrency(n) {
 
 function getSelectedMailboxes() {
   return [...state.selectedMailboxes];
+}
+
+function scopeLabel(scope) {
+  if (scope === 'subject') return 'Onderwerp';
+  if (scope === 'from') return 'Afzender';
+  if (scope === 'body') return 'Body';
+  return 'Alles';
 }
 
 // ============================================================
@@ -882,6 +895,19 @@ function renderMain() {
 
     <div style="margin-bottom: 24px;">
       <div class="config-section">
+        <label>Zoeken in</label>
+        <div class="inline-input" style="margin-bottom:10px;">
+          <select id="search-scope" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit;font-size:0.88em;outline:none;">
+            <option value="all" ${state.searchScope === 'all' ? 'selected' : ''}>Alles</option>
+            <option value="subject" ${state.searchScope === 'subject' ? 'selected' : ''}>Onderwerp</option>
+            <option value="from" ${state.searchScope === 'from' ? 'selected' : ''}>Afzender</option>
+            <option value="body" ${state.searchScope === 'body' ? 'selected' : ''}>Mail body</option>
+          </select>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;">
+          <input type="checkbox" id="exclude-louvenberg" ${state.excludeLouvenberg ? 'checked' : ''} style="accent-color:var(--accent)">
+          <span>Filter mails van @louvenbergadvies.nl</span>
+        </label>
         <label>Handmatig zoeken</label>
         <div class="inline-input">
           <input type="text" id="manual-query" placeholder="Factuurnr, bedrijfsnaam, etc." value="${esc(state.manualQuery)}">
@@ -1063,6 +1089,27 @@ function bindMainEvents() {
     });
     manualInput.addEventListener('keydown', e => {
       if (e.key === 'Enter') searchManual();
+    });
+  }
+
+  const scopeSelect = document.getElementById('search-scope');
+  if (scopeSelect) {
+    scopeSelect.addEventListener('change', e => {
+      state.searchScope = e.target.value;
+      log(`Zoekveld ingesteld op: ${scopeLabel(state.searchScope)}`, 'info');
+    });
+  }
+
+  const excludeLouvenberg = document.getElementById('exclude-louvenberg');
+  if (excludeLouvenberg) {
+    excludeLouvenberg.addEventListener('change', e => {
+      state.excludeLouvenberg = !!e.target.checked;
+      log(
+        state.excludeLouvenberg
+          ? 'Filter actief: @louvenbergadvies.nl wordt uitgesloten'
+          : 'Filter uit: @louvenbergadvies.nl wordt meegenomen',
+        'info'
+      );
     });
   }
 

@@ -134,14 +134,25 @@ function parseMailboxListFromEnv() {
   }));
 }
 
-async function searchMessages(accessToken, terms, mailboxes, top = 5) {
+async function searchMessages(accessToken, terms, mailboxes, top = 5, requestedScope = 'all', requestedExcludeLouvenberg = false) {
   const unique = new Map();
   const safeTop = Math.min(Math.max(Number(top) || 5, 1), 25);
+  const rawScope = String(requestedScope || 'all').trim().toLowerCase();
+  const searchScope = ['all', 'subject', 'from', 'body'].includes(rawScope) ? rawScope : 'all';
+  const excludeLouvenberg = !!requestedExcludeLouvenberg;
+
+  function buildAqs(term) {
+    const escaped = String(term).replace(/"/g, '\\"');
+    if (searchScope === 'subject') return `subject:"${escaped}"`;
+    if (searchScope === 'from') return `from:"${escaped}"`;
+    if (searchScope === 'body') return `body:"${escaped}"`;
+    return `"${escaped}"`;
+  }
 
   for (const rawTerm of terms || []) {
     const term = String(rawTerm || '').trim();
     if (!term) continue;
-    const q = encodeURIComponent(`"${term}"`);
+    const q = encodeURIComponent(buildAqs(term));
 
     for (const rawMailbox of mailboxes || []) {
       const mailbox = String(rawMailbox || '').trim();
@@ -155,6 +166,9 @@ async function searchMessages(accessToken, terms, mailboxes, top = 5) {
       try {
         const data = await graphGet(accessToken, path, { ConsistencyLevel: 'eventual' });
         for (const m of data.value || []) {
+          const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
+          if (excludeLouvenberg && fromAddress.endsWith('@louvenbergadvies.nl')) continue;
+
           if (unique.has(m.id)) continue;
           unique.set(m.id, {
             id: m.id,
@@ -164,7 +178,8 @@ async function searchMessages(accessToken, terms, mailboxes, top = 5) {
             hasAttachments: !!m.hasAttachments,
             bodyPreview: m.bodyPreview,
             _mailbox: mailbox,
-            _matchedTerm: term
+            _matchedTerm: term,
+            _matchedScope: searchScope
           });
         }
       } catch (e) {
@@ -265,7 +280,9 @@ exports.handler = async (event) => {
         accessToken,
         payload.terms || [],
         payload.mailboxes || [],
-        payload.top || 5
+        payload.top || 5,
+        payload.searchScope || 'all',
+        payload.excludeLouvenberg === true
       );
       return { statusCode: 200, headers, body: JSON.stringify({ messages }) };
     }
