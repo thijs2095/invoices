@@ -1,0 +1,234 @@
+const DEFAULT_ALLOWED_HEADERS = 'Content-Type, Authorization';
+const DEFAULT_ALLOWED_METHODS = 'POST, OPTIONS';
+
+function getCorsHeaders(event) {
+  const reqOrigin = (event.headers && (event.headers.origin || event.headers.Origin)) || '';
+  const configured = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const allowOrigin = configured.length
+    ? (configured.includes(reqOrigin) ? reqOrigin : configured[0])
+    : '*';
+
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Headers': DEFAULT_ALLOWED_HEADERS,
+    'Access-Control-Allow-Methods': DEFAULT_ALLOWED_METHODS,
+    'Content-Type': 'application/json'
+  };
+}
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+function getBearerToken(event) {
+  const auth = (event.headers && (event.headers.authorization || event.headers.Authorization)) || '';
+  if (!auth.startsWith('Bearer ')) return '';
+  return auth.slice(7).trim();
+}
+
+async function verifyFrontendUserToken(event) {
+  const token = getBearerToken(event);
+  if (!token) return null;
+
+  const resp = await fetch('https://graph.microsoft.com/v1.0/me?$select=id,displayName,userPrincipalName,mail', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  if (!resp.ok) return null;
+  return resp.json();
+}
+
+async function getAzureAppToken() {
+  const tenantId = requiredEnv('AZURE_TENANT_ID');
+  const clientId = requiredEnv('AZURE_CLIENT_ID');
+  const clientSecret = requiredEnv('AZURE_CLIENT_SECRET');
+
+  const url = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: 'https://graph.microsoft.com/.default'
+  });
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString()
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Azure token error (${resp.status}): ${errText}`);
+  }
+
+  const data = await resp.json();
+  return data.access_token;
+}
+
+async function graphGet(accessToken, pathOrUrl, extraHeaders = {}) {
+  const url = pathOrUrl.startsWith('http')
+    ? pathOrUrl
+    : `https://graph.microsoft.com/v1.0${pathOrUrl}`;
+
+  const resp = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...extraHeaders
+    }
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Graph error (${resp.status}): ${text}`);
+  }
+
+  return resp.json();
+}
+
+async function listAllMailboxes(accessToken) {
+  const mailboxes = [];
+  let nextUrl = '/users?$select=id,displayName,mail,userPrincipalName&$top=999';
+
+  while (nextUrl) {
+    const data = await graphGet(accessToken, nextUrl);
+    const users = data.value || [];
+    for (const u of users) {
+      const mail = u.mail || u.userPrincipalName;
+      if (!mail) continue;
+      mailboxes.push({
+        id: u.id,
+        displayName: u.displayName || mail,
+        mail
+      });
+    }
+    nextUrl = data['@odata.nextLink'] || null;
+  }
+
+  mailboxes.sort((a, b) => a.mail.localeCompare(b.mail));
+  return mailboxes;
+}
+
+async function searchMessages(accessToken, terms, mailboxes, top = 5) {
+  const unique = new Map();
+  const safeTop = Math.min(Math.max(Number(top) || 5, 1), 25);
+
+  for (const rawTerm of terms || []) {
+    const term = String(rawTerm || '').trim();
+    if (!term) continue;
+    const q = encodeURIComponent(`"${term}"`);
+
+    for (const rawMailbox of mailboxes || []) {
+      const mailbox = String(rawMailbox || '').trim();
+      if (!mailbox) continue;
+
+      const path = `/users/${encodeURIComponent(mailbox)}/messages`
+        + `?$search=${q}`
+        + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview`
+        + `&$top=${safeTop}`;
+
+      try {
+        const data = await graphGet(accessToken, path, { ConsistencyLevel: 'eventual' });
+        for (const m of data.value || []) {
+          if (unique.has(m.id)) continue;
+          unique.set(m.id, {
+            id: m.id,
+            subject: m.subject,
+            from: m.from,
+            receivedDateTime: m.receivedDateTime,
+            hasAttachments: !!m.hasAttachments,
+            bodyPreview: m.bodyPreview,
+            _mailbox: mailbox,
+            _matchedTerm: term
+          });
+        }
+      } catch (e) {
+        // Ignore mailbox-level failures so one inaccessible mailbox does not fail all searches.
+      }
+    }
+  }
+
+  return Array.from(unique.values())
+    .sort((a, b) => (new Date(b.receivedDateTime) - new Date(a.receivedDateTime)));
+}
+
+async function getAttachments(accessToken, mailbox, messageId) {
+  const safeMailbox = String(mailbox || '').trim();
+  const safeMessageId = String(messageId || '').trim();
+  if (!safeMailbox || !safeMessageId) {
+    throw new Error('mailbox and messageId are required');
+  }
+
+  const path = `/users/${encodeURIComponent(safeMailbox)}/messages/${encodeURIComponent(safeMessageId)}/attachments`
+    + '?$select=id,name,size,contentType,contentBytes,@odata.type';
+
+  const data = await graphGet(accessToken, path);
+  return (data.value || [])
+    .filter(a => a['@odata.type'] === '#microsoft.graph.fileAttachment')
+    .map(a => ({
+      id: a.id,
+      name: a.name,
+      size: a.size,
+      contentType: a.contentType,
+      contentBytes: a.contentBytes
+    }));
+}
+
+exports.handler = async (event) => {
+  const headers = getCorsHeaders(event);
+
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 204, headers, body: '' };
+  }
+
+  if (event.httpMethod !== 'POST') {
+    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
+  }
+
+  try {
+    const payload = event.body ? JSON.parse(event.body) : {};
+    const action = payload.action;
+
+    if (!action) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing action' }) };
+    }
+
+    if (action === 'health') {
+      return { statusCode: 200, headers, body: JSON.stringify({ ok: true }) };
+    }
+
+    const frontendUser = await verifyFrontendUserToken(event);
+    if (!frontendUser) {
+      return { statusCode: 401, headers, body: JSON.stringify({ error: 'Unauthorized: log in with Azure AD first' }) };
+    }
+
+    const accessToken = await getAzureAppToken();
+
+    if (action === 'listMailboxes') {
+      const mailboxes = await listAllMailboxes(accessToken);
+      return { statusCode: 200, headers, body: JSON.stringify({ mailboxes }) };
+    }
+
+    if (action === 'searchMessages') {
+      const messages = await searchMessages(
+        accessToken,
+        payload.terms || [],
+        payload.mailboxes || [],
+        payload.top || 5
+      );
+      return { statusCode: 200, headers, body: JSON.stringify({ messages }) };
+    }
+
+    if (action === 'getAttachments') {
+      const attachments = await getAttachments(accessToken, payload.mailbox, payload.messageId);
+      return { statusCode: 200, headers, body: JSON.stringify({ attachments }) };
+    }
+
+    return { statusCode: 400, headers, body: JSON.stringify({ error: `Unknown action: ${action}` }) };
+  } catch (error) {
+    const msg = error && error.message ? error.message : 'Unknown backend error';
+    return { statusCode: 500, headers, body: JSON.stringify({ error: msg }) };
+  }
+};

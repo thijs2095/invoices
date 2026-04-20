@@ -351,24 +351,26 @@
 const state = {
   msalInstance: null,
   account: null,
-  accessToken: null,
-  // MSAL config (from Netlify env vars via config.js)
+  userToken: null,
+  authReady: false,
   clientId: window.NETLIFY_CONFIG?.clientId || '',
   tenantId: window.NETLIFY_CONFIG?.tenantId || '',
   redirectUri: location.origin + location.pathname,
-  // Data
   invoices: [],
-  results: {},       // { rowIdx: { found, mails: [...] } }
-  users: [],         // org users (mailboxes)
-  selectedMailboxes: new Set(), // selected user ids for searching
+  results: {},
+  users: [],
+  selectedMailboxes: new Set(),
   isSearching: false,
   searchProgress: 0,
   logs: [],
   fileName: null,
-  // manual search
   manualQuery: '',
   manualResults: [],
+  backendOk: false,
 };
+
+const API_PATH = '/.netlify/functions/mail-read-app';
+const USER_SCOPES = ['User.Read'];
 
 // ============================================================
 // Logging
@@ -381,86 +383,117 @@ function log(msg, type = '') {
 }
 
 // ============================================================
-// MSAL helpers
+// Frontend auth (Azure AD / MSAL)
 // ============================================================
-function initMsal() {
-  if (!state.clientId || !state.tenantId) return;
+async function initAuth() {
+  if (!state.clientId || !state.tenantId) {
+    log('Azure frontend configuratie ontbreekt (clientId/tenantId)', 'error');
+    state.authReady = true;
+    render();
+    return;
+  }
+
   const config = {
     auth: {
       clientId: state.clientId,
       authority: `https://login.microsoftonline.com/${state.tenantId}`,
-      redirectUri: state.redirectUri,
+      redirectUri: state.redirectUri
     },
     cache: { cacheLocation: 'sessionStorage' }
   };
+
   state.msalInstance = new msal.PublicClientApplication(config);
-  // Check if returning from redirect
-  state.msalInstance.handleRedirectPromise().then(resp => {
-    if (resp) {
+
+  try {
+    const resp = await state.msalInstance.handleRedirectPromise();
+    if (resp && resp.account) {
       state.account = resp.account;
-      state.accessToken = resp.accessToken;
-      log('Ingelogd als ' + resp.account.username, 'success');
-      loadUsers();
     } else {
       const accounts = state.msalInstance.getAllAccounts();
-      if (accounts.length) {
-        state.account = accounts[0];
-        acquireTokenSilent();
-      }
+      if (accounts.length) state.account = accounts[0];
     }
-    render();
-  });
-}
 
-const SCOPES = ['Mail.ReadWrite', 'User.Read.All', 'Mail.Read.All'];
+    if (state.account) {
+      await acquireUserToken();
+      log('Ingelogd als ' + (state.account.username || state.account.name || 'gebruiker'), 'success');
+      await initBackend();
+    }
+  } catch (e) {
+    log('Login initialisatie mislukt: ' + e.message, 'error');
+  } finally {
+    state.authReady = true;
+    render();
+  }
+}
 
 async function login() {
-  if (!state.msalInstance) {
-    alert('Azure configuratie ontbreekt. Controleer de Netlify environment variabelen.');
-    return;
-  }
-  try {
-    await state.msalInstance.loginRedirect({ scopes: SCOPES });
-  } catch (e) {
-    log('Login error: ' + e.message, 'error');
-  }
+  if (!state.msalInstance) return;
+  await state.msalInstance.loginRedirect({ scopes: USER_SCOPES });
 }
 
-async function acquireTokenSilent() {
-  try {
-    const resp = await state.msalInstance.acquireTokenSilent({
-      scopes: SCOPES, account: state.account
-    });
-    state.accessToken = resp.accessToken;
-    log('Token vernieuwd', 'info');
-    loadUsers();
-    render();
-  } catch (e) {
-    log('Token expired, opnieuw inloggen…', 'error');
-    login();
-  }
+async function acquireUserToken() {
+  if (!state.msalInstance || !state.account) return null;
+  const resp = await state.msalInstance.acquireTokenSilent({
+    scopes: USER_SCOPES,
+    account: state.account
+  });
+  state.userToken = resp.accessToken;
+  return state.userToken;
 }
 
 function logout() {
-  if (state.msalInstance) {
-    state.msalInstance.logoutRedirect();
-  }
+  if (!state.msalInstance) return;
+  state.msalInstance.logoutRedirect();
 }
 
-async function graphGet(url) {
-  if (!state.accessToken) await acquireTokenSilent();
-  const resp = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
-    headers: { Authorization: `Bearer ${state.accessToken}` }
+// ============================================================
+// Backend API
+// ============================================================
+async function callApi(action, payload = {}, retryOnAuth = true) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.userToken) headers.Authorization = `Bearer ${state.userToken}`;
+
+  const resp = await fetch(API_PATH, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ action, ...payload })
   });
-  if (resp.status === 401) {
-    await acquireTokenSilent();
-    return graphGet(url);
+
+  const text = await resp.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    throw new Error('Backend gaf geen geldige JSON terug');
   }
+
+  if (resp.status === 401 && retryOnAuth && state.account) {
+    try {
+      await acquireUserToken();
+      return callApi(action, payload, false);
+    } catch (e) {
+      throw new Error('Sessie verlopen, log opnieuw in');
+    }
+  }
+
   if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Graph ${resp.status}: ${err}`);
+    throw new Error(data.error || `Backend fout (${resp.status})`);
   }
-  return resp.json();
+
+  return data;
+}
+
+async function initBackend() {
+  try {
+    await callApi('health');
+    state.backendOk = true;
+    log('Netlify functie actief (application-level Graph)', 'success');
+    await loadUsers();
+  } catch (e) {
+    state.backendOk = false;
+    log('Backend niet bereikbaar: ' + e.message, 'error');
+  }
+  render();
 }
 
 // ============================================================
@@ -468,14 +501,13 @@ async function graphGet(url) {
 // ============================================================
 async function loadUsers() {
   try {
-    const data = await graphGet('/users?$select=id,displayName,mail,userPrincipalName&$top=999');
-    state.users = (data.value || []).filter(u => u.mail);
-    // Select all mailboxes by default
-    state.selectedMailboxes = new Set(state.users.map(u => u.id));
-    log(`${state.users.length} mailboxen gevonden`, 'success');
+    const data = await callApi('listMailboxes');
+    state.users = (data.mailboxes || []).filter(u => u.mail);
+    state.selectedMailboxes = new Set(state.users.map(u => u.mail));
+    log(`${state.users.length} mailboxen geladen`, 'success');
     render();
   } catch (e) {
-    log('Kan gebruikers niet laden: ' + e.message, 'error');
+    log('Kan mailboxen niet laden: ' + e.message, 'error');
     state.users = [];
     render();
   }
@@ -492,18 +524,16 @@ function handleFile(file) {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-    // Parse rows: skip header and section headers
     const invoices = [];
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
-      if (!row || !row[0] || !row[2]) continue; // need dagboek + datum
+      if (!row || !row[0] || !row[2]) continue;
       const desc = String(row[3] || '');
       if (!desc) continue;
       const amount = row[4] || 0;
       const datum = row[2];
       let dateStr = '';
       if (typeof datum === 'number') {
-        // Excel serial date
         const d = XLSX.SSF.parse_date_code(datum);
         dateStr = `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
       } else if (datum instanceof Date) {
@@ -529,18 +559,15 @@ function handleFile(file) {
 }
 
 function extractSearchTerms(desc) {
-  // Try to extract meaningful search terms from the description
-  // Remove bank reference numbers, payment processor info, etc.
   let clean = desc
     .replace(/via\s+(Stichting\s+)?Mollie\s+Payments?/gi, '')
     .replace(/via\s+Tikkie\s+Zakelijk/gi, '')
     .replace(/via\s+Stripe\s+Technology.*/gi, '')
     .replace(/via\s+Rabo\s+Zakelijk\s+Betaalverzoek/gi, '')
     .replace(/via\s+CM\.com/gi, '')
-    .replace(/NL\d{2}[A-Z]{4}\d+/g, '') // IBAN
-    .replace(/\b\d{10,}\b/g, '')         // long numbers
+    .replace(/NL\d{2}[A-Z]{4}\d+/g, '')
+    .replace(/\b\d{10,}\b/g, '')
     .replace(/\b[A-Z0-9]{8,20}\b/g, (m) => {
-      // Keep if it looks like a name, remove if it's a reference
       return /[aeiou]/i.test(m) ? m : '';
     })
     .replace(/PAS\d+\s+NR:\w+/g, '')
@@ -549,15 +576,11 @@ function extractSearchTerms(desc) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Get the first meaningful part (usually company name)
   const parts = clean.split(/[,\/]/);
   const name = parts[0].trim();
-
-  // If there are numbers that look like invoice numbers, include them
   const invoiceNums = desc.match(/\b\d{4,8}\b/g) || [];
   const companyName = (name.substring(0, 60) || desc.substring(0, 40)).trim();
   const terms = [companyName];
-  // Add distinct invoice-like numbers as separate search terms
   for (const num of invoiceNums) {
     if (!terms.includes(num) && num.length >= 4) terms.push(num);
   }
@@ -567,151 +590,110 @@ function extractSearchTerms(desc) {
 // ============================================================
 // Search logic
 // ============================================================
+async function runInvoiceSearch(inv) {
+  const mailboxes = getSelectedMailboxes();
+  const terms = inv.searchTerms || [];
+  if (!terms.length || !mailboxes.length) return { found: false, mails: [] };
+
+  const data = await callApi('searchMessages', {
+    terms,
+    mailboxes,
+    top: 5
+  });
+
+  return {
+    found: (data.messages || []).length > 0,
+    mails: data.messages || []
+  };
+}
+
 async function searchAllInvoices() {
-  if (!state.accessToken || state.invoices.length === 0) return;
+  if (!state.backendOk || state.invoices.length === 0) return;
+  if (getSelectedMailboxes().length === 0) {
+    log('Selecteer minimaal 1 mailbox', 'error');
+    return;
+  }
+
   state.isSearching = true;
   state.searchProgress = 0;
   state.results = {};
   render();
 
-  const mailboxes = getSelectedMailboxIds();
-
   for (let i = 0; i < state.invoices.length; i++) {
     const inv = state.invoices[i];
     state.searchProgress = ((i + 1) / state.invoices.length) * 100;
-
     const terms = inv.searchTerms || [];
-    log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
+    log(`Zoeken: ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
 
-    const allMails = [];
-    const seenIds = new Set();
-    for (const searchQ of terms) {
-      for (const userId of mailboxes) {
-        try {
-          const endpoint = userId === 'me' ? '/me/messages' : `/users/${userId}/messages`;
-          const q = encodeURIComponent(`"${searchQ}"`);
-          const data = await graphGet(
-            `${endpoint}?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview&$top=5`
-          );
-          if (data.value && data.value.length) {
-            for (const m of data.value) {
-              if (seenIds.has(m.id)) continue;
-              seenIds.add(m.id);
-              m._mailbox = userId === 'me' ? state.account.username :
-                (state.users.find(u => u.id === userId)?.mail || userId);
-              m._matchedTerm = searchQ;
-              allMails.push(m);
-            }
-          }
-        } catch (e) {
-          // Skip mailbox errors silently (no access etc)
-        }
-      }
+    try {
+      state.results[i] = await runInvoiceSearch(inv);
+    } catch (e) {
+      state.results[i] = { found: false, mails: [] };
+      log(`Zoekfout bij regel ${i + 1}: ${e.message}`, 'error');
     }
-
-    state.results[i] = {
-      found: allMails.length > 0,
-      mails: allMails,
-    };
     render();
-
-    // Small delay to avoid throttling
-    await new Promise(r => setTimeout(r, 200));
   }
 
   state.isSearching = false;
   const foundCount = Object.values(state.results).filter(r => r.found).length;
-  log(`Klaar! ${foundCount}/${state.invoices.length} facturen gevonden`, 'success');
+  log(`Klaar: ${foundCount}/${state.invoices.length} gevonden`, 'success');
   render();
 }
 
 async function searchSingleInvoice(idx) {
   const inv = state.invoices[idx];
-  if (!inv || !state.accessToken) return;
+  if (!inv || !state.backendOk) return;
 
-  const mailboxes = getSelectedMailboxIds();
-
-  const terms = inv.searchTerms || [];
-  log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
-  const allMails = [];
-  const seenIds = new Set();
-
-  for (const searchQ of terms) {
-    for (const userId of mailboxes) {
-      try {
-        const endpoint = userId === 'me' ? '/me/messages' : `/users/${userId}/messages`;
-        const q = encodeURIComponent(`"${searchQ}"`);
-        const data = await graphGet(
-          `${endpoint}?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview&$top=5`
-        );
-        if (data.value && data.value.length) {
-          for (const m of data.value) {
-            if (seenIds.has(m.id)) continue;
-            seenIds.add(m.id);
-            m._mailbox = userId === 'me' ? state.account.username :
-              (state.users.find(u => u.id === userId)?.mail || userId);
-            m._matchedTerm = searchQ;
-            allMails.push(m);
-          }
-        }
-      } catch (e) {
-        log(`Fout bij mailbox: ${e.message}`, 'error');
-      }
-    }
+  if (getSelectedMailboxes().length === 0) {
+    log('Selecteer minimaal 1 mailbox', 'error');
+    return;
   }
 
-  state.results[idx] = { found: allMails.length > 0, mails: allMails };
-  log(allMails.length ? `${allMails.length} mails gevonden` : 'Geen resultaten', allMails.length ? 'success' : 'error');
+  const terms = inv.searchTerms || [];
+  log(`Zoeken: ${terms.map(t => '"' + t + '"').join(', ')}`, 'info');
+  try {
+    state.results[idx] = await runInvoiceSearch(inv);
+    const count = state.results[idx].mails.length;
+    log(count ? `${count} mails gevonden` : 'Geen resultaten', count ? 'success' : 'error');
+  } catch (e) {
+    state.results[idx] = { found: false, mails: [] };
+    log('Zoekfout: ' + e.message, 'error');
+  }
   render();
 }
 
-// Manual search
 async function searchManual() {
-  if (!state.accessToken || !state.manualQuery) return;
+  if (!state.backendOk || !state.manualQuery) return;
+  if (getSelectedMailboxes().length === 0) {
+    log('Selecteer minimaal 1 mailbox', 'error');
+    return;
+  }
+
   log(`Handmatig zoeken: "${state.manualQuery}"`, 'info');
-
-  const mailboxes = getSelectedMailboxIds();
-
   state.manualResults = [];
   render();
 
-  for (const userId of mailboxes) {
-    try {
-      const endpoint = userId === 'me' ? '/me/messages' : `/users/${userId}/messages`;
-      const q = encodeURIComponent(`"${state.manualQuery}"`);
-      const data = await graphGet(
-        `${endpoint}?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview&$top=10`
-      );
-      if (data.value) {
-        for (const m of data.value) {
-          m._mailbox = userId === 'me' ? state.account.username :
-            (state.users.find(u => u.id === userId)?.mail || userId);
-          state.manualResults.push(m);
-        }
-      }
-    } catch (e) { /* skip */ }
+  try {
+    const data = await callApi('searchMessages', {
+      terms: [state.manualQuery],
+      mailboxes: getSelectedMailboxes(),
+      top: 10
+    });
+    state.manualResults = data.messages || [];
+    log(`${state.manualResults.length} resultaten gevonden`, state.manualResults.length ? 'success' : 'error');
+  } catch (e) {
+    log('Handmatig zoeken mislukt: ' + e.message, 'error');
   }
-  log(`${state.manualResults.length} resultaten gevonden`, state.manualResults.length ? 'success' : 'error');
   render();
 }
 
 // ============================================================
 // Attachments
 // ============================================================
-async function fetchAttachments(mailboxId, messageId) {
+async function fetchAttachments(mailbox, messageId) {
   try {
-    // Find user id from email
-    let uid = mailboxId;
-    if (mailboxId !== 'me') {
-      const user = state.users.find(u => u.mail === mailboxId);
-      if (user) uid = user.id;
-    }
-    const actualEndpoint = uid === 'me' || mailboxId === state.account?.username
-      ? `/me/messages/${messageId}/attachments`
-      : `/users/${uid}/messages/${messageId}/attachments`;
-
-    const data = await graphGet(actualEndpoint);
-    return data.value || [];
+    const data = await callApi('getAttachments', { mailbox, messageId });
+    return data.attachments || [];
   } catch (e) {
     log('Bijlagen ophalen mislukt: ' + e.message, 'error');
     return [];
@@ -726,30 +708,33 @@ function downloadAttachment(att) {
   const blob = new Blob([byteArray], { type: att.contentType || 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = att.name || 'attachment';
-  document.body.appendChild(a); a.click();
+  a.href = url;
+  a.download = att.name || 'attachment';
+  document.body.appendChild(a);
+  a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
 async function showAttachments(mailbox, messageId, btnEl) {
   btnEl.disabled = true;
-  btnEl.textContent = 'Laden…';
+  btnEl.textContent = 'Laden...';
   const atts = await fetchAttachments(mailbox, messageId);
   if (atts.length === 0) {
     btnEl.textContent = 'Geen bijlagen';
     return;
   }
-  // Create download buttons
   const container = btnEl.parentElement;
   btnEl.style.display = 'none';
   for (const att of atts) {
-    if (att['@odata.type'] === '#microsoft.graph.itemAttachment') continue;
     const link = document.createElement('a');
     link.className = 'attachment-item';
     link.href = '#';
     link.textContent = `📎 ${att.name} (${formatBytes(att.size)})`;
-    link.onclick = (e) => { e.preventDefault(); downloadAttachment(att); };
+    link.onclick = (e) => {
+      e.preventDefault();
+      downloadAttachment(att);
+    };
     container.appendChild(link);
   }
 }
@@ -757,21 +742,24 @@ async function showAttachments(mailbox, messageId, btnEl) {
 function formatBytes(b) {
   if (!b) return '0 B';
   if (b < 1024) return b + ' B';
-  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
-  return (b/1048576).toFixed(1) + ' MB';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
 }
 
 function formatDate(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return new Date(d).toLocaleDateString('nl-NL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
 }
 
 function formatCurrency(n) {
   return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(n);
 }
 
-function getSelectedMailboxIds() {
-  if (state.selectedMailboxes.size === 0) return ['me'];
+function getSelectedMailboxes() {
   return [...state.selectedMailboxes];
 }
 
@@ -780,6 +768,11 @@ function getSelectedMailboxIds() {
 // ============================================================
 function render() {
   const app = document.getElementById('app');
+
+  if (!state.authReady) {
+    app.innerHTML = renderLoading();
+    return;
+  }
 
   if (!state.account) {
     app.innerHTML = renderLogin();
@@ -791,6 +784,15 @@ function render() {
   bindMainEvents();
 }
 
+function renderLoading() {
+  return `
+    <div class="login-screen">
+      <h2>Sessie controleren...</h2>
+      <p>Even geduld, we controleren je Microsoft-login.</p>
+    </div>
+  `;
+}
+
 function renderLogin() {
   return `
     <div class="login-screen">
@@ -800,8 +802,8 @@ function renderLogin() {
         </div>
         <div style="color: var(--text-muted); font-size: 0.85em; margin-top: 4px;">Invoice Finder</div>
       </div>
-      <h2>Facturen zoeken in Exchange</h2>
-      <p>Log in met je Microsoft-account om alle mailboxen te doorzoeken op ontbrekende facturen.</p>
+      <h2>Inloggen vereist</h2>
+      <p>Log in met je Microsoft-account om toegang te krijgen tot deze app.</p>
 
       <button class="btn btn-primary" id="btn-login">
         <svg width="16" height="16" viewBox="0 0 21 21" fill="currentColor"><path d="M0 0h10v10H0zM11 0h10v10H11zM0 11h10v10H0zM11 11h10v10H11z"/></svg>
@@ -825,24 +827,32 @@ function renderMain() {
       <div class="header-right">
         <div class="user-badge">
           <span class="indicator"></span>
-          ${state.account.username}
+          ${esc(state.account?.username || state.account?.name || 'Ingelogd')}
           ${state.users.length ? `<span style="color:var(--text-muted)">· ${state.users.length} mailboxen</span>` : ''}
         </div>
+        <button class="btn btn-sm" id="btn-refresh-mailboxes">Ververs mailboxen</button>
         <button class="btn btn-sm" id="btn-logout">Uitloggen</button>
       </div>
     </div>
 
-    <!-- Upload -->
+    ${!state.backendOk ? `
+      <div class="card" style="margin-bottom:24px;border-color:var(--red);background:var(--red-bg)">
+        <div class="card-title" style="color:var(--red)">Backend niet beschikbaar</div>
+        <div style="font-size:0.9em;color:var(--text-dim)">
+          Controleer of de Netlify function en Azure omgevingsvariabelen zijn geconfigureerd.
+        </div>
+      </div>
+    ` : ''}
+
     <div class="upload-zone" id="upload-zone">
       <div class="icon">📄</div>
       <p>${state.fileName
-        ? `<span class="filename">${state.fileName}</span><br>${state.invoices.length} regels geladen — klik om te vervangen`
+        ? `<span class="filename">${state.fileName}</span><br>${state.invoices.length} regels geladen - klik om te vervangen`
         : 'Sleep hier het Excel-bestand van je boekhouder<br>of klik om te selecteren'
       }</p>
       <input type="file" id="file-input" accept=".xlsx,.xls,.csv" style="display:none">
     </div>
 
-    <!-- Mailbox picker -->
     ${state.users.length > 0 ? `
       <div class="mailbox-picker">
         <div class="mailbox-picker-header">
@@ -855,7 +865,7 @@ function renderMain() {
         <div class="mailbox-list">
           ${state.users.map(u => `
             <label class="mailbox-item">
-              <input type="checkbox" data-userid="${u.id}" ${state.selectedMailboxes.has(u.id) ? 'checked' : ''}>
+              <input type="checkbox" data-mailbox="${esc(u.mail)}" ${state.selectedMailboxes.has(u.mail) ? 'checked' : ''}>
               <div>
                 <div class="mail-addr">${esc(u.mail)}</div>
                 <div class="mail-name">${esc(u.displayName)}</div>
@@ -866,34 +876,30 @@ function renderMain() {
       </div>
     ` : ''}
 
-    <!-- Handmatig zoeken -->
     <div style="margin-bottom: 24px;">
       <div class="config-section">
         <label>Handmatig zoeken</label>
         <div class="inline-input">
-          <input type="text" id="manual-query" placeholder="Factuurnr, bedrijfsnaam, etc." value="${state.manualQuery}">
-          <button class="btn btn-sm" id="btn-manual-search" ${!state.accessToken ? 'disabled' : ''}>Zoek</button>
+          <input type="text" id="manual-query" placeholder="Factuurnr, bedrijfsnaam, etc." value="${esc(state.manualQuery)}">
+          <button class="btn btn-sm" id="btn-manual-search" ${!state.backendOk ? 'disabled' : ''}>Zoek</button>
         </div>
       </div>
     </div>
 
-    <!-- Actions -->
     <div class="search-actions" style="margin-bottom: 20px;">
       <button class="btn btn-primary" id="btn-search-all"
-        ${state.invoices.length === 0 || state.isSearching ? 'disabled' : ''}>
-        ${state.isSearching ? 'Zoeken…' : `Alle ${state.invoices.length} regels doorzoeken`}
+        ${state.invoices.length === 0 || state.isSearching || !state.backendOk ? 'disabled' : ''}>
+        ${state.isSearching ? 'Zoeken...' : `Alle ${state.invoices.length} regels doorzoeken`}
       </button>
       ${state.isSearching ? `<span style="color:var(--text-dim);font-size:0.85em">${Math.round(state.searchProgress)}%</span>` : ''}
     </div>
 
-    <!-- Progress -->
     ${state.isSearching ? `
       <div class="progress-bar">
         <div class="fill" style="width:${state.searchProgress}%"></div>
       </div>
     ` : ''}
 
-    <!-- Stats -->
     ${totalSearched > 0 ? `
       <div class="stats-row">
         <div class="stat"><div class="value">${totalSearched}</div><div class="label">Doorzocht</div></div>
@@ -902,7 +908,6 @@ function renderMain() {
       </div>
     ` : ''}
 
-    <!-- Manual results -->
     ${state.manualResults.length > 0 ? `
       <div class="card" style="margin-bottom:24px">
         <div class="card-title">Handmatige zoekresultaten (${state.manualResults.length})</div>
@@ -912,7 +917,7 @@ function renderMain() {
               <th>Onderwerp</th><th>Van</th><th>Mailbox</th><th>Datum</th><th>Bijlagen</th>
             </tr></thead>
             <tbody>
-              ${state.manualResults.map((m, i) => `
+              ${state.manualResults.map((m) => `
                 <tr>
                   <td>${esc(m.subject || '(geen)')}<div class="mail-snippet">${esc(m.bodyPreview?.substring(0, 80) || '')}</div></td>
                   <td class="mono">${esc(m.from?.emailAddress?.address || '')}</td>
@@ -921,8 +926,8 @@ function renderMain() {
                   <td>
                     <div class="attachment-list">
                       ${m.hasAttachments
-                        ? `<button class="btn btn-sm" onclick="showAttachments('${m._mailbox}','${m.id}',this)">📎 Ophalen</button>`
-                        : '<span style="color:var(--text-muted);font-size:0.8em">—</span>'}
+                        ? `<button class="btn btn-sm" onclick="showAttachments(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'),this)">📎 Ophalen</button>`
+                        : '<span style="color:var(--text-muted);font-size:0.8em">-</span>'}
                     </div>
                   </td>
                 </tr>
@@ -933,7 +938,6 @@ function renderMain() {
       </div>
     ` : ''}
 
-    <!-- Invoice table -->
     ${state.invoices.length > 0 ? `
       <div class="table-wrap">
         <table>
@@ -977,18 +981,18 @@ function renderMain() {
                     ${r && r.mails.length > 0 ? r.mails.map(m => `
                       <div style="margin-bottom:6px;font-size:0.8em;">
                         <strong>${esc(m.subject?.substring(0, 50) || '(geen)')}</strong>
-                        <span style="color:var(--text-muted)"> — ${esc(m.from?.emailAddress?.address || '')}</span>
+                        <span style="color:var(--text-muted)"> - ${esc(m.from?.emailAddress?.address || '')}</span>
                         ${m._matchedTerm ? `<span class="mono" style="color:var(--accent);font-size:0.85em;margin-left:4px;">[${esc(m._matchedTerm)}]</span>` : ''}
                         <div class="attachment-list">
                           ${m.hasAttachments
-                            ? `<button class="btn btn-sm" onclick="showAttachments('${m._mailbox}','${m.id}',this)">📎 Bijlagen</button>`
+                            ? `<button class="btn btn-sm" onclick="showAttachments(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'),this)">📎 Bijlagen</button>`
                             : ''}
                         </div>
                       </div>
                     `).join('') : ''}
                   </td>
                   <td>
-                    <button class="btn btn-sm" onclick="searchSingleInvoice(${i})" ${state.isSearching ? 'disabled' : ''}>🔍</button>
+                    <button class="btn btn-sm" onclick="searchSingleInvoice(${i})" ${state.isSearching || !state.backendOk ? 'disabled' : ''}>🔍</button>
                   </td>
                 </tr>
               `;
@@ -1003,7 +1007,6 @@ function renderMain() {
       </div>
     `}
 
-    <!-- Log panel -->
     ${state.logs.length > 0 ? `
       <div class="card" style="margin-top:20px">
         <div class="card-title">Log</div>
@@ -1016,9 +1019,9 @@ function renderMain() {
 }
 
 function esc(s) {
-  if (!s) return '';
+  if (s === null || s === undefined) return '';
   const d = document.createElement('div');
-  d.textContent = s;
+  d.textContent = String(s);
   return d.innerHTML;
 }
 
@@ -1026,37 +1029,54 @@ function esc(s) {
 // Event binding
 // ============================================================
 function bindLoginEvents() {
-  const btn = document.getElementById('btn-login');
-  if (btn) btn.addEventListener('click', () => { login(); });
+  document.getElementById('btn-login')?.addEventListener('click', async () => {
+    try {
+      await login();
+    } catch (e) {
+      log('Inloggen mislukt: ' + e.message, 'error');
+    }
+  });
 }
 
 function bindMainEvents() {
-  document.getElementById('btn-logout')?.addEventListener('click', () => { logout(); });
-  document.getElementById('btn-search-all')?.addEventListener('click', () => { searchAllInvoices(); });
-  document.getElementById('btn-manual-search')?.addEventListener('click', () => { searchManual(); });
+  document.getElementById('btn-logout')?.addEventListener('click', () => {
+    logout();
+  });
+  document.getElementById('btn-search-all')?.addEventListener('click', () => {
+    searchAllInvoices();
+  });
+  document.getElementById('btn-manual-search')?.addEventListener('click', () => {
+    searchManual();
+  });
+  document.getElementById('btn-refresh-mailboxes')?.addEventListener('click', () => {
+    loadUsers();
+  });
 
   const manualInput = document.getElementById('manual-query');
   if (manualInput) {
-    manualInput.addEventListener('input', e => { state.manualQuery = e.target.value; });
-    manualInput.addEventListener('keydown', e => { if (e.key === 'Enter') { searchManual(); } });
+    manualInput.addEventListener('input', e => {
+      state.manualQuery = e.target.value;
+    });
+    manualInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') searchManual();
+    });
   }
 
-  // Mailbox checkboxes
   document.querySelectorAll('.mailbox-item input[type="checkbox"]').forEach(cb => {
     cb.addEventListener('change', e => {
-      const uid = e.target.dataset.userid;
+      const mailbox = e.target.dataset.mailbox;
       if (e.target.checked) {
-        state.selectedMailboxes.add(uid);
+        state.selectedMailboxes.add(mailbox);
       } else {
-        state.selectedMailboxes.delete(uid);
+        state.selectedMailboxes.delete(mailbox);
       }
-      // Update header count without full re-render
       const header = document.querySelector('.mailbox-picker-header .card-title');
       if (header) header.textContent = `Mailboxen doorzoeken (${state.selectedMailboxes.size}/${state.users.length})`;
     });
   });
+
   document.getElementById('btn-select-all')?.addEventListener('click', () => {
-    state.selectedMailboxes = new Set(state.users.map(u => u.id));
+    state.selectedMailboxes = new Set(state.users.map(u => u.mail));
     render();
   });
   document.getElementById('btn-select-none')?.addEventListener('click', () => {
@@ -1064,15 +1084,18 @@ function bindMainEvents() {
     render();
   });
 
-  // File upload
   const zone = document.getElementById('upload-zone');
   const fileInput = document.getElementById('file-input');
   if (zone && fileInput) {
     zone.addEventListener('click', () => fileInput.click());
-    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragover', e => {
+      e.preventDefault();
+      zone.classList.add('dragover');
+    });
     zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
     zone.addEventListener('drop', e => {
-      e.preventDefault(); zone.classList.remove('dragover');
+      e.preventDefault();
+      zone.classList.remove('dragover');
       if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
     });
     fileInput.addEventListener('change', e => {
@@ -1080,12 +1103,10 @@ function bindMainEvents() {
     });
   }
 
-  // Scroll log to bottom
   const logPanel = document.getElementById('log-panel');
   if (logPanel) logPanel.scrollTop = logPanel.scrollHeight;
 }
 
-// Make functions globally accessible for onclick handlers
 window.showAttachments = showAttachments;
 window.searchSingleInvoice = searchSingleInvoice;
 window.removeSearchTerm = function(invIdx, termIdx) {
@@ -1099,14 +1120,13 @@ window.showTagInput = function(invIdx) {
   if (!container || container.querySelector('.tag-input-wrap')) return;
   const wrap = document.createElement('div');
   wrap.className = 'tag-input-wrap';
-  wrap.innerHTML = `<input type="text" placeholder="Factuurnr, bedrijf…" autofocus>`;
+  wrap.innerHTML = '<input type="text" placeholder="Factuurnr, bedrijf..." autofocus>';
   container.appendChild(wrap);
   const input = wrap.querySelector('input');
   input.focus();
   const addTerm = () => {
     const val = input.value.trim();
     if (val && state.invoices[invIdx]) {
-      // Support comma-separated input
       const newTerms = val.split(',').map(t => t.trim()).filter(Boolean);
       state.invoices[invIdx].searchTerms.push(...newTerms);
       render();
@@ -1115,17 +1135,20 @@ window.showTagInput = function(invIdx) {
     }
   };
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); addTerm(); }
-    if (e.key === 'Escape') { wrap.remove(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addTerm();
+    }
+    if (e.key === 'Escape') wrap.remove();
   });
-  input.addEventListener('blur', () => { setTimeout(addTerm, 150); });
+  input.addEventListener('blur', () => setTimeout(addTerm, 150));
 };
 
 // ============================================================
 // Init
 // ============================================================
-initMsal();
 render();
+initAuth();
 </script>
 </body>
 </html>
