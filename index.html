@@ -295,6 +295,44 @@
   }
   .tag-input-wrap input:focus { border-color: var(--accent); }
   .tag-input-wrap input::placeholder { color: var(--text-muted); }
+
+  /* Mailbox picker */
+  .mailbox-picker {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 16px 20px; margin-bottom: 24px;
+  }
+  .mailbox-picker-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .mailbox-picker-header .card-title { margin-bottom: 0; }
+  .mailbox-picker-actions { display: flex; gap: 8px; }
+  .mailbox-list {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 6px;
+  }
+  .mailbox-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: var(--radius);
+    cursor: pointer; transition: background 0.1s;
+    font-size: 0.85em;
+  }
+  .mailbox-item:hover { background: var(--surface2); }
+  .mailbox-item input[type="checkbox"] {
+    accent-color: var(--accent); width: 15px; height: 15px;
+    cursor: pointer; flex-shrink: 0;
+  }
+  .mailbox-item .mail-addr {
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 0.88em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mailbox-item .mail-name {
+    color: var(--text-muted); font-size: 0.82em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mailbox-count {
+    font-size: 0.78em; color: var(--text-muted); margin-top: 8px;
+  }
 </style>
 </head>
 <body>
@@ -322,7 +360,7 @@ const state = {
   invoices: [],
   results: {},       // { rowIdx: { found, mails: [...] } }
   users: [],         // org users (mailboxes)
-  searchScope: 'all', // 'all' or 'me'
+  selectedMailboxes: new Set(), // selected user ids for searching
   isSearching: false,
   searchProgress: 0,
   logs: [],
@@ -432,6 +470,8 @@ async function loadUsers() {
   try {
     const data = await graphGet('/users?$select=id,displayName,mail,userPrincipalName&$top=999');
     state.users = (data.value || []).filter(u => u.mail);
+    // Select all mailboxes by default
+    state.selectedMailboxes = new Set(state.users.map(u => u.id));
     log(`${state.users.length} mailboxen gevonden`, 'success');
     render();
   } catch (e) {
@@ -534,9 +574,7 @@ async function searchAllInvoices() {
   state.results = {};
   render();
 
-  const mailboxes = state.searchScope === 'all' && state.users.length > 0
-    ? state.users.map(u => u.id)
-    : ['me'];
+  const mailboxes = getSelectedMailboxIds();
 
   for (let i = 0; i < state.invoices.length; i++) {
     const inv = state.invoices[i];
@@ -591,9 +629,7 @@ async function searchSingleInvoice(idx) {
   const inv = state.invoices[idx];
   if (!inv || !state.accessToken) return;
 
-  const mailboxes = state.searchScope === 'all' && state.users.length > 0
-    ? state.users.map(u => u.id)
-    : ['me'];
+  const mailboxes = getSelectedMailboxIds();
 
   const terms = inv.searchTerms || [];
   log(`Zoeken: ${terms.map(t => '"'+t+'"').join(', ')}…`, 'info');
@@ -634,8 +670,7 @@ async function searchManual() {
   if (!state.accessToken || !state.manualQuery) return;
   log(`Handmatig zoeken: "${state.manualQuery}"`, 'info');
 
-  const mailboxes = state.searchScope === 'all' && state.users.length > 0
-    ? state.users.map(u => u.id) : ['me'];
+  const mailboxes = getSelectedMailboxIds();
 
   state.manualResults = [];
   render();
@@ -735,6 +770,11 @@ function formatCurrency(n) {
   return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(n);
 }
 
+function getSelectedMailboxIds() {
+  if (state.selectedMailboxes.size === 0) return ['me'];
+  return [...state.selectedMailboxes];
+}
+
 // ============================================================
 // Render
 // ============================================================
@@ -802,15 +842,32 @@ function renderMain() {
       <input type="file" id="file-input" accept=".xlsx,.xls,.csv" style="display:none">
     </div>
 
-    <!-- Config -->
-    <div class="config-panel">
-      <div class="config-section">
-        <label>Zoekbereik</label>
-        <select id="search-scope">
-          <option value="all" ${state.searchScope === 'all' ? 'selected' : ''}>Alle mailboxen (${state.users.length})</option>
-          <option value="me" ${state.searchScope === 'me' ? 'selected' : ''}>Alleen mijn mailbox</option>
-        </select>
+    <!-- Mailbox picker -->
+    ${state.users.length > 0 ? `
+      <div class="mailbox-picker">
+        <div class="mailbox-picker-header">
+          <div class="card-title">Mailboxen doorzoeken (${state.selectedMailboxes.size}/${state.users.length})</div>
+          <div class="mailbox-picker-actions">
+            <button class="btn btn-sm" id="btn-select-all">Alles aan</button>
+            <button class="btn btn-sm" id="btn-select-none">Alles uit</button>
+          </div>
+        </div>
+        <div class="mailbox-list">
+          ${state.users.map(u => `
+            <label class="mailbox-item">
+              <input type="checkbox" data-userid="${u.id}" ${state.selectedMailboxes.has(u.id) ? 'checked' : ''}>
+              <div>
+                <div class="mail-addr">${esc(u.mail)}</div>
+                <div class="mail-name">${esc(u.displayName)}</div>
+              </div>
+            </label>
+          `).join('')}
+        </div>
       </div>
+    ` : ''}
+
+    <!-- Handmatig zoeken -->
+    <div style="margin-bottom: 24px;">
       <div class="config-section">
         <label>Handmatig zoeken</label>
         <div class="inline-input">
@@ -984,8 +1041,27 @@ function bindMainEvents() {
     manualInput.addEventListener('keydown', e => { if (e.key === 'Enter') { searchManual(); } });
   }
 
-  document.getElementById('search-scope')?.addEventListener('change', e => {
-    state.searchScope = e.target.value;
+  // Mailbox checkboxes
+  document.querySelectorAll('.mailbox-item input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', e => {
+      const uid = e.target.dataset.userid;
+      if (e.target.checked) {
+        state.selectedMailboxes.add(uid);
+      } else {
+        state.selectedMailboxes.delete(uid);
+      }
+      // Update header count without full re-render
+      const header = document.querySelector('.mailbox-picker-header .card-title');
+      if (header) header.textContent = `Mailboxen doorzoeken (${state.selectedMailboxes.size}/${state.users.length})`;
+    });
+  });
+  document.getElementById('btn-select-all')?.addEventListener('click', () => {
+    state.selectedMailboxes = new Set(state.users.map(u => u.id));
+    render();
+  });
+  document.getElementById('btn-select-none')?.addEventListener('click', () => {
+    state.selectedMailboxes.clear();
+    render();
   });
 
   // File upload
