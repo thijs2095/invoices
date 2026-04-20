@@ -172,7 +172,7 @@ async function searchMessages(
 
       const path = `/users/${encodeURIComponent(mailbox)}/messages`
         + `?$search=${q}`
-        + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview`
+        + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview,webLink`
         + `&$top=${safeTop}`;
 
       try {
@@ -194,6 +194,7 @@ async function searchMessages(
             receivedDateTime: m.receivedDateTime,
             hasAttachments: !!m.hasAttachments,
             bodyPreview: m.bodyPreview,
+            webLink: m.webLink,
             _mailbox: mailbox,
             _matchedTerm: term,
             _matchedScope: searchScope

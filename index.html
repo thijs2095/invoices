@@ -137,7 +137,7 @@
     overflow-x: auto; border: 1px solid var(--border);
     border-radius: var(--radius-lg); margin-bottom: 24px;
   }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+  table { width: 100%; min-width: 1180px; border-collapse: collapse; font-size: 0.85em; }
   thead { background: var(--surface2); }
   th {
     text-align: left; padding: 10px 14px; font-weight: 600;
@@ -170,6 +170,9 @@
   .status-badge.searching { background: var(--blue-bg); color: var(--blue); }
 
   .attachment-list { margin-top: 6px; }
+  .result-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .result-actions .btn,
+  .attachment-list .btn { white-space: nowrap; }
   .attachment-item {
     display: inline-flex; align-items: center; gap: 4px;
     background: var(--surface3); border: 1px solid var(--border);
@@ -984,17 +987,25 @@ function renderMain() {
         <div class="table-wrap" style="border:none;margin:0">
           <table>
             <thead><tr>
-              <th>Onderwerp</th><th>Van</th><th>Mailbox</th><th>Datum</th><th>Bijlagen</th>
+              <th>Onderwerp</th><th>Van</th><th>Mailbox</th><th>Datum</th><th style="min-width:220px">Acties</th>
             </tr></thead>
             <tbody>
               ${state.manualResults.map((m) => `
                 <tr>
-                  <td>${esc(m.subject || '(geen)')}<div class="mail-snippet">${esc(m.bodyPreview?.substring(0, 80) || '')}</div></td>
+                  <td>
+                    ${m.webLink
+                      ? `<a href="${esc(m.webLink)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none">${esc(m.subject || '(geen)')}</a>`
+                      : esc(m.subject || '(geen)')}
+                    <div class="mail-snippet">${esc(m.bodyPreview?.substring(0, 80) || '')}</div>
+                  </td>
                   <td class="mono">${esc(m.from?.emailAddress?.address || '')}</td>
                   <td class="mono" style="font-size:0.75em">${esc(m._mailbox || '')}</td>
                   <td style="white-space:nowrap">${formatDate(m.receivedDateTime)}</td>
                   <td>
-                    <div class="attachment-list">
+                    <div class="result-actions">
+                      ${m.webLink
+                        ? `<a class="btn btn-sm" href="${esc(m.webLink)}" target="_blank" rel="noopener noreferrer">✉ Open mail</a>`
+                        : ''}
                       ${m.hasAttachments
                         ? `<button class="btn btn-sm" onclick="showAttachments(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'),this)">📎 Ophalen</button>`
                         : '<span style="color:var(--text-muted);font-size:0.8em">-</span>'}
@@ -1019,8 +1030,8 @@ function renderMain() {
               <th>Datum</th>
               <th style="text-align:right">Bedrag</th>
               <th>Status</th>
-              <th>Resultaten</th>
-              <th></th>
+              <th style="min-width:320px">Resultaten</th>
+              <th style="width:70px"></th>
             </tr>
           </thead>
           <tbody>
@@ -1050,10 +1061,15 @@ function renderMain() {
                   <td>
                     ${r && r.mails.length > 0 ? r.mails.map(m => `
                       <div style="margin-bottom:6px;font-size:0.8em;">
-                        <strong>${esc(m.subject?.substring(0, 50) || '(geen)')}</strong>
+                        ${m.webLink
+                          ? `<a href="${esc(m.webLink)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-weight:600">${esc(m.subject?.substring(0, 50) || '(geen)')}</a>`
+                          : `<strong>${esc(m.subject?.substring(0, 50) || '(geen)')}</strong>`}
                         <span style="color:var(--text-muted)"> - ${esc(m.from?.emailAddress?.address || '')}</span>
                         ${m._matchedTerm ? `<span class="mono" style="color:var(--accent);font-size:0.85em;margin-left:4px;">[${esc(m._matchedTerm)}]</span>` : ''}
-                        <div class="attachment-list">
+                        <div class="result-actions" style="margin-top:6px;">
+                          ${m.webLink
+                            ? `<a class="btn btn-sm" href="${esc(m.webLink)}" target="_blank" rel="noopener noreferrer">✉ Open mail</a>`
+                            : ''}
                           ${m.hasAttachments
                             ? `<button class="btn btn-sm" onclick="showAttachments(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'),this)">📎 Bijlagen</button>`
                             : ''}
@@ -1061,7 +1077,7 @@ function renderMain() {
                       </div>
                     `).join('') : ''}
                   </td>
-                  <td>
+                  <td style="white-space:nowrap">
                     <button class="btn btn-sm" onclick="searchSingleInvoice(${i})" ${state.isSearching || !state.backendOk ? 'disabled' : ''}>🔍</button>
                   </td>
                 </tr>
