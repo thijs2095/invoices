@@ -1,6 +1,14 @@
 const DEFAULT_ALLOWED_HEADERS = 'Content-Type, Authorization';
 const DEFAULT_ALLOWED_METHODS = 'POST, OPTIONS';
 
+class HttpError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.name = 'HttpError';
+    this.statusCode = statusCode;
+  }
+}
+
 function getCorsHeaders(event) {
   const reqOrigin = (event.headers && (event.headers.origin || event.headers.Origin)) || '';
   const configured = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -18,7 +26,7 @@ function getCorsHeaders(event) {
 
 function requiredEnv(name) {
   const value = process.env[name];
-  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  if (!value) throw new HttpError(500, `Missing environment variable: ${name}`);
   return value;
 }
 
@@ -82,7 +90,7 @@ async function graphGet(accessToken, pathOrUrl, extraHeaders = {}) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(`Graph error (${resp.status}): ${text}`);
+    throw new HttpError(resp.status, `Graph error (${resp.status}): ${text}`);
   }
 
   return resp.json();
@@ -109,6 +117,21 @@ async function listAllMailboxes(accessToken) {
 
   mailboxes.sort((a, b) => a.mail.localeCompare(b.mail));
   return mailboxes;
+}
+
+function parseMailboxListFromEnv() {
+  const raw = process.env.MAILBOX_LIST || process.env.DHL_WAREHOUSE_EMAIL || '';
+  const values = raw
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  const uniq = Array.from(new Set(values));
+  return uniq.map(mail => ({
+    id: mail,
+    displayName: mail,
+    mail
+  }));
 }
 
 async function searchMessages(accessToken, terms, mailboxes, top = 5) {
@@ -207,8 +230,26 @@ exports.handler = async (event) => {
     const accessToken = await getAzureAppToken();
 
     if (action === 'listMailboxes') {
-      const mailboxes = await listAllMailboxes(accessToken);
-      return { statusCode: 200, headers, body: JSON.stringify({ mailboxes }) };
+      let mailboxes = [];
+      let source = 'graph';
+      try {
+        mailboxes = await listAllMailboxes(accessToken);
+      } catch (e) {
+        // If app permission for /users is missing, allow a configured static list.
+        if (e instanceof HttpError && (e.statusCode === 401 || e.statusCode === 403)) {
+          mailboxes = parseMailboxListFromEnv();
+          source = 'MAILBOX_LIST';
+          if (mailboxes.length === 0) {
+            throw new HttpError(
+              403,
+              'Geen toegang tot /users. Voeg Application permission User.Read.All toe met admin consent, of zet MAILBOX_LIST in Netlify env.'
+            );
+          }
+        } else {
+          throw e;
+        }
+      }
+      return { statusCode: 200, headers, body: JSON.stringify({ mailboxes, source }) };
     }
 
     if (action === 'searchMessages') {
@@ -229,6 +270,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: `Unknown action: ${action}` }) };
   } catch (error) {
     const msg = error && error.message ? error.message : 'Unknown backend error';
-    return { statusCode: 500, headers, body: JSON.stringify({ error: msg }) };
+    const statusCode = (error && error.statusCode) ? error.statusCode : 500;
+    return { statusCode, headers, body: JSON.stringify({ error: msg }) };
   }
 };
