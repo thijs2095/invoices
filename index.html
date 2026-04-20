@@ -731,7 +731,12 @@ async function showAttachments(mailbox, messageId, btnEl) {
   btnEl.textContent = 'Laden...';
   const atts = await fetchAttachments(mailbox, messageId);
   if (atts.length === 0) {
-    btnEl.textContent = 'Geen bijlagen';
+    btnEl.textContent = 'Geen downloadbare bijlagen';
+    log('Geen downloadbare bijlagen gevonden voor dit bericht', 'info');
+    setTimeout(() => {
+      btnEl.disabled = false;
+      btnEl.textContent = '📎 Ophalen';
+    }, 1800);
     return;
   }
   const container = btnEl.parentElement;

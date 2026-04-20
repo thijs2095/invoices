@@ -205,19 +205,34 @@ async function getAttachments(accessToken, mailbox, messageId) {
 
   const result = [];
   for (const a of (data.value || [])) {
-    // Try to cast each attachment to fileAttachment and skip non-file attachments.
+    // Load attachment details first; type info is reliable there.
     try {
-      const detailPath = `${basePath}/${encodeURIComponent(a.id)}/microsoft.graph.fileAttachment?$select=id,name,size,contentType,contentBytes`;
-      const detail = await graphGet(accessToken, detailPath);
+      const detailPath = `${basePath}/${encodeURIComponent(a.id)}`;
+      let detail = await graphGet(accessToken, detailPath);
+
+      if (String(detail['@odata.type'] || '') !== '#microsoft.graph.fileAttachment') continue;
+
+      // Fallback: some tenants/versions omit contentBytes in the generic detail payload.
+      if (!detail.contentBytes) {
+        try {
+          const castPath = `${basePath}/${encodeURIComponent(a.id)}/microsoft.graph.fileAttachment?$select=id,name,size,contentType,contentBytes`;
+          detail = await graphGet(accessToken, castPath);
+        } catch (e) {
+          // Keep original detail and let the contentBytes check below decide.
+        }
+      }
+
+      if (!detail.contentBytes) continue;
+
       result.push({
         id: detail.id,
-        name: detail.name,
-        size: detail.size,
-        contentType: detail.contentType,
+        name: detail.name || a.name,
+        size: detail.size || a.size,
+        contentType: detail.contentType || a.contentType,
         contentBytes: detail.contentBytes
       });
     } catch (e) {
-      // itemAttachment/referenceAttachment cannot be cast to fileAttachment.
+      // Skip attachments we cannot fetch (permissions/type-specific constraints).
       continue;
     }
   }
