@@ -258,6 +258,19 @@ async function getAttachments(accessToken, mailbox, messageId) {
   return result;
 }
 
+async function getMessage(accessToken, mailbox, messageId) {
+  const safeMailbox = String(mailbox || '').trim();
+  const safeMessageId = String(messageId || '').trim();
+  if (!safeMailbox || !safeMessageId) {
+    throw new Error('mailbox and messageId are required');
+  }
+
+  const path = `/users/${encodeURIComponent(safeMailbox)}/messages/${encodeURIComponent(safeMessageId)}`
+    + '?$select=id,subject,from,receivedDateTime,body,bodyPreview,hasAttachments,webLink';
+
+  return graphGet(accessToken, path);
+}
+
 exports.handler = async (event) => {
   const headers = getCorsHeaders(event);
 
@@ -327,6 +340,11 @@ exports.handler = async (event) => {
     if (action === 'getAttachments') {
       const attachments = await getAttachments(accessToken, payload.mailbox, payload.messageId);
       return { statusCode: 200, headers, body: JSON.stringify({ attachments }) };
+    }
+
+    if (action === 'getMessage') {
+      const message = await getMessage(accessToken, payload.mailbox, payload.messageId);
+      return { statusCode: 200, headers, body: JSON.stringify({ message }) };
     }
 
     return { statusCode: 400, headers, body: JSON.stringify({ error: `Unknown action: ${action}` }) };

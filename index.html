@@ -45,7 +45,7 @@
   .mono { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
 
   /* Layout */
-  .app { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .app { width: min(98vw, 1920px); max-width: 1920px; margin: 0 auto; padding: 24px; }
 
   .header {
     display: flex; align-items: center; justify-content: space-between;
@@ -337,6 +337,39 @@
   .mailbox-count {
     font-size: 0.78em; color: var(--text-muted); margin-top: 8px;
   }
+
+  /* In-app mail viewer */
+  .mail-viewer-backdrop {
+    position: fixed; inset: 0; background: rgba(3,3,8,0.72);
+    z-index: 1000; display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .mail-viewer {
+    width: min(1200px, 96vw); height: min(88vh, 900px);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); display: grid;
+    grid-template-rows: auto auto 1fr; overflow: hidden;
+  }
+  .mail-viewer-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+  }
+  .mail-viewer-meta {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    font-size: 0.84em;
+  }
+  @media (max-width: 900px) { .mail-viewer-meta { grid-template-columns: 1fr; } }
+  .mail-viewer-meta .k { color: var(--text-muted); margin-right: 6px; }
+  .mail-viewer-body {
+    background: var(--bg); overflow: auto; padding: 18px;
+    font-size: 0.9em; line-height: 1.5;
+  }
+  .mail-open-link {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    text-align: left; padding: 0; font: inherit; text-decoration: none;
+  }
+  .mail-open-link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -373,11 +406,20 @@ const state = {
   searchYear: 'all',
   excludeLouvenberg: true,
   manualResults: [],
+  mailViewer: {
+    open: false,
+    loading: false,
+    mailbox: '',
+    messageId: '',
+    message: null,
+    error: ''
+  },
   backendOk: false,
 };
 
 const API_PATH = '/.netlify/functions/mail-read-app';
 const USER_SCOPES = ['User.Read'];
+const MAILBOX_SELECTION_KEY = 'invoiceFinder.selectedMailboxes';
 
 // ============================================================
 // Logging
@@ -513,7 +555,21 @@ async function loadUsers() {
       const mail = String(u.mail || '').toLowerCase().trim();
       return mail.endsWith('@impossible-drinks.com');
     });
-    state.selectedMailboxes = new Set(state.users.map(u => u.mail));
+
+    const available = new Set(state.users.map(u => u.mail));
+    const saved = loadSavedMailboxSelection();
+    if (saved.length > 0) {
+      const restored = saved.filter(m => available.has(m));
+      state.selectedMailboxes = new Set(restored);
+      // If none of the saved mailboxes exist anymore, fall back to all.
+      if (state.selectedMailboxes.size === 0) {
+        state.selectedMailboxes = new Set(state.users.map(u => u.mail));
+      }
+    } else {
+      state.selectedMailboxes = new Set(state.users.map(u => u.mail));
+    }
+
+    saveMailboxSelection();
     log(`${state.users.length} mailboxen geladen`, 'success');
     render();
   } catch (e) {
@@ -716,6 +772,52 @@ async function fetchAttachments(mailbox, messageId) {
   }
 }
 
+async function openMessageInApp(mailbox, messageId) {
+  state.mailViewer = {
+    open: true,
+    loading: true,
+    mailbox,
+    messageId,
+    message: null,
+    error: ''
+  };
+  render();
+
+  try {
+    const data = await callApi('getMessage', { mailbox, messageId });
+    state.mailViewer.loading = false;
+    state.mailViewer.message = data.message || null;
+    if (!state.mailViewer.message) {
+      state.mailViewer.error = 'Bericht kon niet geladen worden';
+    }
+  } catch (e) {
+    state.mailViewer.loading = false;
+    state.mailViewer.error = e.message || 'Bericht kon niet geladen worden';
+  }
+  render();
+}
+
+function closeMessageViewer() {
+  state.mailViewer = {
+    open: false,
+    loading: false,
+    mailbox: '',
+    messageId: '',
+    message: null,
+    error: ''
+  };
+  render();
+}
+
+function sanitizeMailHtml(html) {
+  const raw = String(html || '');
+  return raw
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object[\s\S]*?>[\s\S]*?<\/object>/gi, '')
+    .replace(/on\w+\s*=\s*(['"]).*?\1/gi, '');
+}
+
 function downloadAttachment(att) {
   if (!att.contentBytes) return;
   const byteChars = atob(att.contentBytes);
@@ -782,6 +884,27 @@ function formatCurrency(n) {
 
 function getSelectedMailboxes() {
   return [...state.selectedMailboxes];
+}
+
+function saveMailboxSelection() {
+  try {
+    localStorage.setItem(MAILBOX_SELECTION_KEY, JSON.stringify([...state.selectedMailboxes]));
+  } catch (e) {
+    // Ignore localStorage write errors (private mode/quota).
+  }
+}
+
+function loadSavedMailboxSelection() {
+  try {
+    const raw = localStorage.getItem(MAILBOX_SELECTION_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.map(v => String(v || '').trim()).filter(Boolean)
+      : [];
+  } catch (e) {
+    return [];
+  }
 }
 
 function scopeLabel(scope) {
@@ -870,6 +993,8 @@ function renderMain() {
   const foundCount = Object.values(state.results).filter(r => r.found).length;
   const notFoundCount = Object.values(state.results).filter(r => !r.found).length;
   const totalSearched = Object.keys(state.results).length;
+
+  const viewer = state.mailViewer;
 
   return `
     <div class="header">
@@ -993,9 +1118,7 @@ function renderMain() {
               ${state.manualResults.map((m) => `
                 <tr>
                   <td>
-                    ${m.webLink
-                      ? `<a href="${esc(m.webLink)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none">${esc(m.subject || '(geen)')}</a>`
-                      : esc(m.subject || '(geen)')}
+                    <button class="mail-open-link" onclick="openMessageInApp(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'))">${esc(m.subject || '(geen)')}</button>
                     <div class="mail-snippet">${esc(m.bodyPreview?.substring(0, 80) || '')}</div>
                   </td>
                   <td class="mono">${esc(m.from?.emailAddress?.address || '')}</td>
@@ -1003,9 +1126,7 @@ function renderMain() {
                   <td style="white-space:nowrap">${formatDate(m.receivedDateTime)}</td>
                   <td>
                     <div class="result-actions">
-                      ${m.webLink
-                        ? `<a class="btn btn-sm" href="${esc(m.webLink)}" target="_blank" rel="noopener noreferrer">✉ Open mail</a>`
-                        : ''}
+                      <button class="btn btn-sm" onclick="openMessageInApp(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'))">✉ Open in app</button>
                       ${m.hasAttachments
                         ? `<button class="btn btn-sm" onclick="showAttachments(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'),this)">📎 Ophalen</button>`
                         : '<span style="color:var(--text-muted);font-size:0.8em">-</span>'}
@@ -1061,15 +1182,11 @@ function renderMain() {
                   <td>
                     ${r && r.mails.length > 0 ? r.mails.map(m => `
                       <div style="margin-bottom:6px;font-size:0.8em;">
-                        ${m.webLink
-                          ? `<a href="${esc(m.webLink)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-weight:600">${esc(m.subject?.substring(0, 50) || '(geen)')}</a>`
-                          : `<strong>${esc(m.subject?.substring(0, 50) || '(geen)')}</strong>`}
+                        <button class="mail-open-link" style="font-weight:600" onclick="openMessageInApp(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'))">${esc(m.subject?.substring(0, 50) || '(geen)')}</button>
                         <span style="color:var(--text-muted)"> - ${esc(m.from?.emailAddress?.address || '')}</span>
                         ${m._matchedTerm ? `<span class="mono" style="color:var(--accent);font-size:0.85em;margin-left:4px;">[${esc(m._matchedTerm)}]</span>` : ''}
                         <div class="result-actions" style="margin-top:6px;">
-                          ${m.webLink
-                            ? `<a class="btn btn-sm" href="${esc(m.webLink)}" target="_blank" rel="noopener noreferrer">✉ Open mail</a>`
-                            : ''}
+                          <button class="btn btn-sm" onclick="openMessageInApp(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'))">✉ Open in app</button>
                           ${m.hasAttachments
                             ? `<button class="btn btn-sm" onclick="showAttachments(decodeURIComponent('${encodeURIComponent(m._mailbox || '')}'),decodeURIComponent('${encodeURIComponent(m.id || '')}'),this)">📎 Bijlagen</button>`
                             : ''}
@@ -1098,6 +1215,32 @@ function renderMain() {
         <div class="card-title">Log</div>
         <div class="log-panel" id="log-panel">
           ${state.logs.map(l => `<div class="log-entry ${l.type}"><span style="color:var(--text-muted)">[${l.ts}]</span> ${esc(l.msg)}</div>`).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    ${viewer.open ? `
+      <div class="mail-viewer-backdrop" id="mail-viewer-backdrop">
+        <div class="mail-viewer" role="dialog" aria-modal="true" aria-label="Mail viewer">
+          <div class="mail-viewer-head">
+            <div class="card-title" style="margin-bottom:0">Mail Viewer</div>
+            <button class="btn btn-sm" id="btn-close-mail-viewer">Sluiten</button>
+          </div>
+          <div class="mail-viewer-meta">
+            ${viewer.message ? `
+              <div><span class="k">Onderwerp:</span>${esc(viewer.message.subject || '(geen)')}</div>
+              <div><span class="k">Datum:</span>${formatDate(viewer.message.receivedDateTime)}</div>
+              <div><span class="k">Van:</span>${esc(viewer.message.from?.emailAddress?.address || '')}</div>
+              <div><span class="k">Mailbox:</span>${esc(viewer.mailbox || '')}</div>
+            ` : `<div><span class="k">Mailbox:</span>${esc(viewer.mailbox || '')}</div>`}
+          </div>
+          <div class="mail-viewer-body">
+            ${viewer.loading ? '<div style="color:var(--text-muted)">Mail laden...</div>' : ''}
+            ${(!viewer.loading && viewer.error) ? `<div style="color:var(--red)">${esc(viewer.error)}</div>` : ''}
+            ${(!viewer.loading && !viewer.error && viewer.message)
+              ? sanitizeMailHtml(viewer.message.body?.content || viewer.message.bodyPreview || '')
+              : ''}
+          </div>
         </div>
       </div>
     ` : ''}
@@ -1185,6 +1328,7 @@ function bindMainEvents() {
       } else {
         state.selectedMailboxes.delete(mailbox);
       }
+      saveMailboxSelection();
       const header = document.querySelector('.mailbox-picker-header .card-title');
       if (header) header.textContent = `Mailboxen doorzoeken (${state.selectedMailboxes.size}/${state.users.length})`;
     });
@@ -1192,10 +1336,12 @@ function bindMainEvents() {
 
   document.getElementById('btn-select-all')?.addEventListener('click', () => {
     state.selectedMailboxes = new Set(state.users.map(u => u.mail));
+    saveMailboxSelection();
     render();
   });
   document.getElementById('btn-select-none')?.addEventListener('click', () => {
     state.selectedMailboxes.clear();
+    saveMailboxSelection();
     render();
   });
 
@@ -1218,11 +1364,19 @@ function bindMainEvents() {
     });
   }
 
+  document.getElementById('btn-close-mail-viewer')?.addEventListener('click', () => {
+    closeMessageViewer();
+  });
+  document.getElementById('mail-viewer-backdrop')?.addEventListener('click', (e) => {
+    if (e.target && e.target.id === 'mail-viewer-backdrop') closeMessageViewer();
+  });
+
   const logPanel = document.getElementById('log-panel');
   if (logPanel) logPanel.scrollTop = logPanel.scrollHeight;
 }
 
 window.showAttachments = showAttachments;
+window.openMessageInApp = openMessageInApp;
 window.searchSingleInvoice = searchSingleInvoice;
 window.removeSearchTerm = function(invIdx, termIdx) {
   if (state.invoices[invIdx]) {
