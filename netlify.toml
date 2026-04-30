@@ -1,3 +1,18 @@
 [build]
   publish = "."
   command = "echo \"window.NETLIFY_CONFIG = { clientId: '$AZURE_CLIENT_ID', tenantId: '$AZURE_TENANT_ID' };\" > config.js"
+
+# MCP endpoint. Token is in the URL path because Claude's Custom Connector
+# dialog has no field for a static bearer header. Netlify can't rewrite the
+# splat into a function path, so we pass the token through as ?token=...
+[[redirects]]
+  from = "/mcp/:token"
+  to = "/.netlify/functions/mcp?token=:token"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/mcp"
+  to = "/.netlify/functions/mcp"
+  status = 200
+  force = true
