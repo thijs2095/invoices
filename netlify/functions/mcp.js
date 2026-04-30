@@ -110,6 +110,15 @@ async function resolveAllMailboxes(accessToken) {
   }
 }
 
+function normalizeMailbox(input) {
+  if (!input) return '';
+  if (typeof input === 'string') return input.trim();
+  if (typeof input === 'object') {
+    return String(input.mail || input.userPrincipalName || input.email || input.address || input.id || '').trim();
+  }
+  return String(input).trim();
+}
+
 async function searchMessages(
   accessToken,
   terms,
@@ -121,6 +130,7 @@ async function searchMessages(
   requestedOnlyWithAttachments = false
 ) {
   const unique = new Map();
+  const errors = [];
   const safeTop = Math.min(Math.max(Number(top) || 10, 1), 25);
   const rawScope = String(requestedScope || 'all').trim().toLowerCase();
   const searchScope = ['all', 'subject', 'from', 'body'].includes(rawScope) ? rawScope : 'all';
@@ -138,60 +148,79 @@ async function searchMessages(
     return `"${escaped}"`;
   }
 
-  for (const rawTerm of terms || []) {
-    const term = String(rawTerm || '').trim();
-    if (!term) continue;
+  const cleanTerms = (terms || []).map(t => String(t || '').trim()).filter(Boolean);
+  const cleanMailboxes = Array.from(new Set((mailboxes || []).map(normalizeMailbox).filter(Boolean)));
+
+  // Build all (term, mailbox) tasks and run them in parallel for speed.
+  const tasks = [];
+  for (const term of cleanTerms) {
     const normalizedTerm = term.toLowerCase();
     const q = encodeURIComponent(buildAqs(term));
-
-    for (const rawMailbox of mailboxes || []) {
-      const mailbox = String(rawMailbox || '').trim();
-      if (!mailbox) continue;
-
+    for (const mailbox of cleanMailboxes) {
       const path = `/users/${encodeURIComponent(mailbox)}/messages`
         + `?$search=${q}`
         + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview,webLink`
         + `&$top=${safeTop}`;
 
-      try {
-        const data = await graphGet(accessToken, path, { ConsistencyLevel: 'eventual' });
-        for (const m of data.value || []) {
-          const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
-          const fromName = String(m?.from?.emailAddress?.name || '').toLowerCase().trim();
-
-          if (searchScope === 'from') {
-            const senderMatches = fromAddress.includes(normalizedTerm) || fromName.includes(normalizedTerm);
-            if (!senderMatches) continue;
-          }
-          if (onlyWithAttachments && !m.hasAttachments) continue;
-          if (yearFilter) {
-            const y = new Date(m.receivedDateTime).getFullYear();
-            if (y !== yearFilter) continue;
-          }
-          if (excludeLouvenberg && fromAddress.endsWith('@louvenbergadvies.nl')) continue;
-          if (unique.has(m.id)) continue;
-
-          unique.set(m.id, {
-            id: m.id,
-            subject: m.subject,
-            from: m.from?.emailAddress || null,
-            receivedDateTime: m.receivedDateTime,
-            hasAttachments: !!m.hasAttachments,
-            bodyPreview: m.bodyPreview,
-            webLink: m.webLink,
-            mailbox,
-            matchedTerm: term,
-            matchedScope: searchScope
-          });
-        }
-      } catch (e) {
-        // ignore single-mailbox failures
-      }
+      tasks.push(
+        graphGet(accessToken, path, { ConsistencyLevel: 'eventual' })
+          .then(data => ({ ok: true, mailbox, term, normalizedTerm, data }))
+          .catch(e => ({ ok: false, mailbox, term, error: e.message || String(e), status: e.statusCode || 0 }))
+      );
     }
   }
 
-  return Array.from(unique.values())
+  const results = await Promise.all(tasks);
+
+  for (const r of results) {
+    if (!r.ok) {
+      errors.push({ mailbox: r.mailbox, term: r.term, status: r.status, error: r.error });
+      continue;
+    }
+    for (const m of r.data.value || []) {
+      const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
+      const fromName = String(m?.from?.emailAddress?.name || '').toLowerCase().trim();
+
+      if (searchScope === 'from') {
+        const senderMatches = fromAddress.includes(r.normalizedTerm) || fromName.includes(r.normalizedTerm);
+        if (!senderMatches) continue;
+      }
+      if (onlyWithAttachments && !m.hasAttachments) continue;
+      if (yearFilter) {
+        const y = new Date(m.receivedDateTime).getFullYear();
+        if (y !== yearFilter) continue;
+      }
+      if (excludeLouvenberg && fromAddress.endsWith('@louvenbergadvies.nl')) continue;
+      if (unique.has(m.id)) continue;
+
+      unique.set(m.id, {
+        id: m.id,
+        subject: m.subject,
+        from: m.from?.emailAddress || null,
+        receivedDateTime: m.receivedDateTime,
+        hasAttachments: !!m.hasAttachments,
+        bodyPreview: m.bodyPreview,
+        webLink: m.webLink,
+        mailbox: r.mailbox,
+        matchedTerm: r.term,
+        matchedScope: searchScope
+      });
+    }
+  }
+
+  const messages = Array.from(unique.values())
     .sort((a, b) => (new Date(b.receivedDateTime) - new Date(a.receivedDateTime)));
+
+  return {
+    messages,
+    stats: {
+      mailboxesSearched: cleanMailboxes.length,
+      termsSearched: cleanTerms.length,
+      totalFound: messages.length,
+      errorsCount: errors.length
+    },
+    errors: errors.slice(0, 5) // first few for diagnostics
+  };
 }
 
 async function getMessage(accessToken, mailbox, messageId) {
@@ -255,8 +284,9 @@ const TOOLS = [
     name: 'search_messages',
     description:
       'Zoek e-mails in één of meerdere mailboxen via Microsoft Graph $search. ' +
-      'Laat "mailboxes" leeg om in alle mailboxen te zoeken. ' +
-      'Resultaat bevat id, mailbox, subject, from, receivedDateTime, bodyPreview en webLink.',
+      'BELANGRIJK: geef "mailboxes" als platte strings met e-mailadressen door (bv. ["thijs@example.com"]), NIET als objecten uit list_mailboxes. ' +
+      'Laat "mailboxes" leeg of weg om in alle mailboxen te zoeken (kan trager zijn). ' +
+      'Antwoord bevat { messages, stats, errors } — controleer "errors" als je niets vindt.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -268,7 +298,7 @@ const TOOLS = [
         mailboxes: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Mailbox e-mailadressen. Laat leeg voor alle mailboxen.'
+          description: 'Lijst van mailbox e-mailadressen als strings, bv. ["info@bedrijf.nl"]. Leeg = alle mailboxen.'
         },
         top: { type: 'integer', minimum: 1, maximum: 25, default: 10 },
         searchScope: {
@@ -327,6 +357,16 @@ const TOOLS = [
       required: ['mailbox', 'messageId', 'attachmentId'],
       additionalProperties: false
     }
+  },
+  {
+    name: 'diagnose_mailbox',
+    description: 'Diagnose-tool: probeert de 3 nieuwste mails uit één mailbox op te halen zonder $search. Gebruik dit als search_messages leeg blijft, om te zien of de mailbox bereikbaar is en welke fout Graph eventueel teruggeeft.',
+    inputSchema: {
+      type: 'object',
+      properties: { mailbox: { type: 'string' } },
+      required: ['mailbox'],
+      additionalProperties: false
+    }
   }
 ];
 
@@ -352,6 +392,18 @@ async function executeTool(name, args) {
       args.searchYear || 'all',
       args.onlyWithAttachments === true
     );
+  }
+  if (name === 'diagnose_mailbox') {
+    const mb = normalizeMailbox(args.mailbox);
+    if (!mb) throw new HttpError(400, 'mailbox is required');
+    const path = `/users/${encodeURIComponent(mb)}/messages`
+      + `?$select=id,subject,from,receivedDateTime&$top=3&$orderby=receivedDateTime desc`;
+    try {
+      const data = await graphGet(accessToken, path);
+      return { mailbox: mb, ok: true, count: (data.value || []).length, sample: data.value || [] };
+    } catch (e) {
+      return { mailbox: mb, ok: false, status: e.statusCode || 0, error: e.message || String(e) };
+    }
   }
   if (name === 'get_message') {
     return await getMessage(accessToken, args.mailbox, args.messageId);
