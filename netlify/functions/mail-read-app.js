@@ -145,6 +145,7 @@ async function searchMessages(
   requestedOnlyWithAttachments = false
 ) {
   const unique = new Map();
+  const debugLog = [];
   const safeTop = Math.min(Math.max(Number(top) || 5, 1), 25);
   const rawScope = String(requestedScope || 'all').trim().toLowerCase();
   const searchScope = ['all', 'subject', 'from', 'body'].includes(rawScope) ? rawScope : 'all';
@@ -154,6 +155,9 @@ async function searchMessages(
   const yearFilter = Number.isInteger(parsedYear) && parsedYear >= 2000 && parsedYear <= 2100
     ? parsedYear
     : null;
+
+  debugLog.push({ step: 'init', requestedYear, parsedYear, yearFilter, searchScope, safeTop });
+  console.log('[searchMessages] init', { requestedYear, parsedYear, yearFilter, searchScope });
 
   function buildAqs(term) {
     const escaped = String(term).replace(/"/g, '\\"');
@@ -177,7 +181,11 @@ async function searchMessages(
     const term = String(rawTerm || '').trim();
     if (!term) continue;
     const normalizedTerm = term.toLowerCase();
-    const q = encodeURIComponent(buildAqs(term));
+    const kql = buildAqs(term);
+    const q = encodeURIComponent(kql);
+
+    debugLog.push({ step: 'kql', term, kql, encoded: q });
+    console.log('[searchMessages] KQL for term', JSON.stringify(term), '→', kql);
 
     for (const rawMailbox of mailboxes || []) {
       const mailbox = String(rawMailbox || '').trim();
@@ -198,6 +206,11 @@ async function searchMessages(
         while (pageUrl && pagesFetched < maxPages) {
           const data = await graphGet(accessToken, pageUrl, { ConsistencyLevel: 'eventual' });
           pagesFetched++;
+
+          const dates = (data.value || []).map(m => m.receivedDateTime?.substring(0, 10));
+          debugLog.push({ step: 'graphResult', mailbox, term, page: pagesFetched, count: data.value?.length ?? 0, dates, hasNextLink: !!data['@odata.nextLink'] });
+          console.log('[searchMessages] Graph →', mailbox, 'term:', JSON.stringify(term), 'page:', pagesFetched, 'count:', data.value?.length ?? 0, 'dates:', dates);
+
           for (const m of data.value || []) {
             const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
             const fromName = String(m?.from?.emailAddress?.name || '').toLowerCase().trim();
@@ -233,13 +246,19 @@ async function searchMessages(
           pageUrl = data['@odata.nextLink'] || null;
         }
       } catch (e) {
-        // Ignore mailbox-level failures so one inaccessible mailbox does not fail all searches.
+        debugLog.push({ step: 'error', mailbox, term, error: e.message || String(e), statusCode: e.statusCode });
+        console.error('[searchMessages] error for', mailbox, term, e.message || String(e));
       }
     }
   }
 
-  return Array.from(unique.values())
+  const messages = Array.from(unique.values())
     .sort((a, b) => (new Date(b.receivedDateTime) - new Date(a.receivedDateTime)));
+
+  debugLog.push({ step: 'done', totalMessages: messages.length });
+  console.log('[searchMessages] done, total:', messages.length);
+
+  return { messages, debug: debugLog };
 }
 
 async function getAttachments(accessToken, mailbox, messageId) {
@@ -357,7 +376,7 @@ exports.handler = async (event) => {
     }
 
     if (action === 'searchMessages') {
-      const messages = await searchMessages(
+      const result = await searchMessages(
         accessToken,
         payload.terms || [],
         payload.mailboxes || [],
@@ -367,7 +386,7 @@ exports.handler = async (event) => {
         payload.searchYear || 'all',
         payload.onlyWithAttachments === true
       );
-      return { statusCode: 200, headers, body: JSON.stringify({ messages }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ messages: result.messages, debug: result.debug }) };
     }
 
     if (action === 'getAttachments') {

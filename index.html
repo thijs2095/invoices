@@ -531,6 +531,12 @@ async function callApi(action, payload = {}, retryOnAuth = true) {
     throw new Error(data.error || `Backend fout (${resp.status})`);
   }
 
+  if (data.debug) {
+    console.group(`[API debug] ${action}`);
+    data.debug.forEach(entry => console.log(entry));
+    console.groupEnd();
+  }
+
   return data;
 }
 
