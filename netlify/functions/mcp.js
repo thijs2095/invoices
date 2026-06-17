@@ -157,10 +157,17 @@ async function searchMessages(
     const normalizedTerm = term.toLowerCase();
     const q = encodeURIComponent(buildAqs(term));
     for (const mailbox of cleanMailboxes) {
-      const path = `/users/${encodeURIComponent(mailbox)}/messages`
+      let path = `/users/${encodeURIComponent(mailbox)}/messages`
         + `?$search=${q}`
+        + `&$count=true`
         + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview,webLink`
         + `&$top=${safeTop}`;
+
+      if (yearFilter) {
+        const from = `${yearFilter}-01-01T00:00:00Z`;
+        const to   = `${yearFilter + 1}-01-01T00:00:00Z`;
+        path += `&$filter=${encodeURIComponent(`receivedDateTime ge ${from} and receivedDateTime lt ${to}`)}`;
+      }
 
       tasks.push(
         graphGet(accessToken, path, { ConsistencyLevel: 'eventual' })
