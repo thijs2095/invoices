@@ -148,21 +148,16 @@ async function searchMessages(
     else if (searchScope === 'body') base = `body:"${escaped}"`;
     else base = `"${escaped}"`;
 
-    // Graph does not support combining $search and $filter on /messages.
-    // Embed the year constraint in the KQL query via the received: property instead.
-    if (yearFilter) {
-      base += ` AND received:${yearFilter}`;
-    }
     return base;
   }
 
   const cleanTerms = (terms || []).map(t => String(t || '').trim()).filter(Boolean);
   const cleanMailboxes = Array.from(new Set((mailboxes || []).map(normalizeMailbox).filter(Boolean)));
 
-  // When no year filter: paginate up to 4 pages (×25) to reach older results.
-  // When year filter is set: KQL already scopes results, one page is enough.
-  const pageSize = yearFilter ? safeTop : 25;
-  const maxPages = yearFilter ? 1 : 4;
+  // Graph does not support $search + $filter or KQL date restrictions on /messages.
+  // Paginate client-side; with yearFilter use more pages and stop early once results go past the target year.
+  const pageSize = 25;
+  const maxPages = yearFilter ? 10 : 4;
 
   function processPage(r) {
     if (!r.ok) {
@@ -226,16 +221,24 @@ async function searchMessages(
   if (maxPages > 1) {
     const nextLinks = firstPageResults
       .filter(r => r.ok && r.data['@odata.nextLink'])
-      .map(r => ({ nextUrl: r.data['@odata.nextLink'], mailbox: r.mailbox, term: r.term, normalizedTerm: r.normalizedTerm }));
+      .map(r => ({ nextUrl: r.data['@odata.nextLink'], mailbox: r.mailbox, term: r.term, normalizedTerm: r.normalizedTerm, lastData: r.data }));
 
     for (const entry of nextLinks) {
       let pageUrl = entry.nextUrl;
       let pagesFetched = 1; // first page already done
+      let lastPageData = entry.lastData;
       while (pageUrl && pagesFetched < maxPages) {
+        // Early stop: once the last item on the previous page is older than the target year,
+        // further pages will only be older still (Graph returns newest first).
+        if (yearFilter && lastPageData?.value?.length > 0) {
+          const lastDate = lastPageData.value[lastPageData.value.length - 1].receivedDateTime;
+          if (lastDate && new Date(lastDate).getFullYear() < yearFilter) break;
+        }
         const result = await graphGet(accessToken, pageUrl, { ConsistencyLevel: 'eventual' })
           .then(data => ({ ok: true, mailbox: entry.mailbox, term: entry.term, normalizedTerm: entry.normalizedTerm, data }))
           .catch(e => ({ ok: false, mailbox: entry.mailbox, term: entry.term, normalizedTerm: entry.normalizedTerm, error: e.message || String(e), status: e.statusCode || 0 }));
         processPage(result);
+        lastPageData = result.ok ? result.data : null;
         pageUrl = result.ok ? (result.data['@odata.nextLink'] || null) : null;
         pagesFetched++;
       }

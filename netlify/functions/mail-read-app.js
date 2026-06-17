@@ -169,11 +169,6 @@ async function searchMessages(
     else if (searchScope === 'body') base = `body:"${escaped}"`;
     else base = `"${escaped}"`;
 
-    // Graph does not support combining $search and $filter on /messages.
-    // Embed the year constraint in the KQL query via the received: property instead.
-    if (yearFilter) {
-      base += ` AND received:${yearFilter}`;
-    }
     return base;
   }
 
@@ -191,10 +186,13 @@ async function searchMessages(
       const mailbox = String(rawMailbox || '').trim();
       if (!mailbox) continue;
 
-      // When no year filter: paginate up to 4 pages (×25) to reach older results.
-      // When year filter is set: KQL already scopes results, one page is enough.
-      const pageSize = yearFilter ? safeTop : 25;
-      const maxPages = yearFilter ? 1 : 4;
+      // Graph does not support $search + $filter, and KQL date property restrictions
+      // (received:YYYY, received>=...) return 400 on the /messages endpoint.
+      // Solution: paginate client-side and stop early once results go past the target year.
+      // With yearFilter: up to 10 pages so we can reach older years despite newer results coming first.
+      // Without yearFilter: 4 pages is enough for a broad recency spread.
+      const pageSize = 25;
+      const maxPages = yearFilter ? 10 : 4;
       const firstPath = `/users/${encodeURIComponent(mailbox)}/messages`
         + `?$search=${q}`
         + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview,webLink`
@@ -243,6 +241,14 @@ async function searchMessages(
               _matchedScope: searchScope
             });
           }
+
+          // Early stop: Graph returns newest results first. Once the last item on this page
+          // is older than the target year, further pages will only be older still.
+          if (yearFilter && data.value?.length > 0) {
+            const lastDate = data.value[data.value.length - 1].receivedDateTime;
+            if (lastDate && new Date(lastDate).getFullYear() < yearFilter) break;
+          }
+
           pageUrl = data['@odata.nextLink'] || null;
         }
       } catch (e) {
