@@ -142,47 +142,32 @@ async function searchMessages(
 
   function buildAqs(term) {
     const escaped = String(term).replace(/"/g, '\\"');
-    if (searchScope === 'subject') return `subject:"${escaped}"`;
-    if (searchScope === 'from') return `"${escaped}"`;
-    if (searchScope === 'body') return `body:"${escaped}"`;
-    return `"${escaped}"`;
+    let base;
+    if (searchScope === 'subject') base = `subject:"${escaped}"`;
+    else if (searchScope === 'from') base = `"${escaped}"`;
+    else if (searchScope === 'body') base = `body:"${escaped}"`;
+    else base = `"${escaped}"`;
+
+    // Graph does not support combining $search and $filter on /messages.
+    // Embed the year constraint in the KQL query via the received: property instead.
+    if (yearFilter) {
+      base += ` AND received>=${yearFilter}-01-01 AND received<=${yearFilter}-12-31`;
+    }
+    return base;
   }
 
   const cleanTerms = (terms || []).map(t => String(t || '').trim()).filter(Boolean);
   const cleanMailboxes = Array.from(new Set((mailboxes || []).map(normalizeMailbox).filter(Boolean)));
 
-  // Build all (term, mailbox) tasks and run them in parallel for speed.
-  const tasks = [];
-  for (const term of cleanTerms) {
-    const normalizedTerm = term.toLowerCase();
-    const q = encodeURIComponent(buildAqs(term));
-    for (const mailbox of cleanMailboxes) {
-      let path = `/users/${encodeURIComponent(mailbox)}/messages`
-        + `?$search=${q}`
-        + `&$count=true`
-        + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview,webLink`
-        + `&$top=${safeTop}`;
+  // When no year filter: paginate up to 4 pages (×25) to reach older results.
+  // When year filter is set: KQL already scopes results, one page is enough.
+  const pageSize = yearFilter ? safeTop : 25;
+  const maxPages = yearFilter ? 1 : 4;
 
-      if (yearFilter) {
-        const from = `${yearFilter}-01-01T00:00:00Z`;
-        const to   = `${yearFilter + 1}-01-01T00:00:00Z`;
-        path += `&$filter=${encodeURIComponent(`receivedDateTime ge ${from} and receivedDateTime lt ${to}`)}`;
-      }
-
-      tasks.push(
-        graphGet(accessToken, path, { ConsistencyLevel: 'eventual' })
-          .then(data => ({ ok: true, mailbox, term, normalizedTerm, data }))
-          .catch(e => ({ ok: false, mailbox, term, error: e.message || String(e), status: e.statusCode || 0 }))
-      );
-    }
-  }
-
-  const results = await Promise.all(tasks);
-
-  for (const r of results) {
+  function processPage(r) {
     if (!r.ok) {
       errors.push({ mailbox: r.mailbox, term: r.term, status: r.status, error: r.error });
-      continue;
+      return;
     }
     for (const m of r.data.value || []) {
       const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
@@ -212,6 +197,48 @@ async function searchMessages(
         matchedTerm: r.term,
         matchedScope: searchScope
       });
+    }
+  }
+
+  // Build all (term, mailbox) first-page tasks and run them in parallel for speed.
+  const firstPageTasks = [];
+  for (const term of cleanTerms) {
+    const normalizedTerm = term.toLowerCase();
+    const q = encodeURIComponent(buildAqs(term));
+    for (const mailbox of cleanMailboxes) {
+      const path = `/users/${encodeURIComponent(mailbox)}/messages`
+        + `?$search=${q}`
+        + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview,webLink`
+        + `&$top=${pageSize}`;
+
+      firstPageTasks.push(
+        graphGet(accessToken, path, { ConsistencyLevel: 'eventual' })
+          .then(data => ({ ok: true, mailbox, term, normalizedTerm, data }))
+          .catch(e => ({ ok: false, mailbox, term, normalizedTerm, error: e.message || String(e), status: e.statusCode || 0 }))
+      );
+    }
+  }
+
+  const firstPageResults = await Promise.all(firstPageTasks);
+  firstPageResults.forEach(processPage);
+
+  // Follow nextLink pages sequentially (pagination is inherently serial).
+  if (maxPages > 1) {
+    const nextLinks = firstPageResults
+      .filter(r => r.ok && r.data['@odata.nextLink'])
+      .map(r => ({ nextUrl: r.data['@odata.nextLink'], mailbox: r.mailbox, term: r.term, normalizedTerm: r.normalizedTerm }));
+
+    for (const entry of nextLinks) {
+      let pageUrl = entry.nextUrl;
+      let pagesFetched = 1; // first page already done
+      while (pageUrl && pagesFetched < maxPages) {
+        const result = await graphGet(accessToken, pageUrl, { ConsistencyLevel: 'eventual' })
+          .then(data => ({ ok: true, mailbox: entry.mailbox, term: entry.term, normalizedTerm: entry.normalizedTerm, data }))
+          .catch(e => ({ ok: false, mailbox: entry.mailbox, term: entry.term, normalizedTerm: entry.normalizedTerm, error: e.message || String(e), status: e.statusCode || 0 }));
+        processPage(result);
+        pageUrl = result.ok ? (result.data['@odata.nextLink'] || null) : null;
+        pagesFetched++;
+      }
     }
   }
 

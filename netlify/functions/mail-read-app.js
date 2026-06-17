@@ -157,12 +157,20 @@ async function searchMessages(
 
   function buildAqs(term) {
     const escaped = String(term).replace(/"/g, '\\"');
-    if (searchScope === 'subject') return `subject:"${escaped}"`;
+    let base;
+    if (searchScope === 'subject') base = `subject:"${escaped}"`;
     // Graph AQS `from:"..."` is often too strict for partial domain/user matches.
     // Use a broader query and validate sender locally below.
-    if (searchScope === 'from') return `"${escaped}"`;
-    if (searchScope === 'body') return `body:"${escaped}"`;
-    return `"${escaped}"`;
+    else if (searchScope === 'from') base = `"${escaped}"`;
+    else if (searchScope === 'body') base = `body:"${escaped}"`;
+    else base = `"${escaped}"`;
+
+    // Graph does not support combining $search and $filter on /messages.
+    // Embed the year constraint in the KQL query via the received: property instead.
+    if (yearFilter) {
+      base += ` AND received>=${yearFilter}-01-01 AND received<=${yearFilter}-12-31`;
+    }
+    return base;
   }
 
   for (const rawTerm of terms || []) {
@@ -175,51 +183,54 @@ async function searchMessages(
       const mailbox = String(rawMailbox || '').trim();
       if (!mailbox) continue;
 
-      let path = `/users/${encodeURIComponent(mailbox)}/messages`
+      // When no year filter: paginate up to 4 pages (×25) to reach older results.
+      // When year filter is set: KQL already scopes results, one page is enough.
+      const pageSize = yearFilter ? safeTop : 25;
+      const maxPages = yearFilter ? 1 : 4;
+      const firstPath = `/users/${encodeURIComponent(mailbox)}/messages`
         + `?$search=${q}`
-        + `&$count=true`
         + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview,webLink`
-        + `&$top=${safeTop}`;
-
-      if (yearFilter) {
-        const from = `${yearFilter}-01-01T00:00:00Z`;
-        const to   = `${yearFilter + 1}-01-01T00:00:00Z`;
-        path += `&$filter=${encodeURIComponent(`receivedDateTime ge ${from} and receivedDateTime lt ${to}`)}`;
-      }
+        + `&$top=${pageSize}`;
 
       try {
-        const data = await graphGet(accessToken, path, { ConsistencyLevel: 'eventual' });
-        for (const m of data.value || []) {
-          const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
-          const fromName = String(m?.from?.emailAddress?.name || '').toLowerCase().trim();
+        let pageUrl = firstPath;
+        let pagesFetched = 0;
+        while (pageUrl && pagesFetched < maxPages) {
+          const data = await graphGet(accessToken, pageUrl, { ConsistencyLevel: 'eventual' });
+          pagesFetched++;
+          for (const m of data.value || []) {
+            const fromAddress = String(m?.from?.emailAddress?.address || '').toLowerCase().trim();
+            const fromName = String(m?.from?.emailAddress?.name || '').toLowerCase().trim();
 
-          if (searchScope === 'from') {
-            const senderMatches = fromAddress.includes(normalizedTerm) || fromName.includes(normalizedTerm);
-            if (!senderMatches) continue;
+            if (searchScope === 'from') {
+              const senderMatches = fromAddress.includes(normalizedTerm) || fromName.includes(normalizedTerm);
+              if (!senderMatches) continue;
+            }
+
+            if (onlyWithAttachments && !m.hasAttachments) continue;
+
+            if (yearFilter) {
+              const y = new Date(m.receivedDateTime).getFullYear();
+              if (y !== yearFilter) continue;
+            }
+
+            if (excludeLouvenberg && fromAddress.endsWith('@louvenbergadvies.nl')) continue;
+
+            if (unique.has(m.id)) continue;
+            unique.set(m.id, {
+              id: m.id,
+              subject: m.subject,
+              from: m.from,
+              receivedDateTime: m.receivedDateTime,
+              hasAttachments: !!m.hasAttachments,
+              bodyPreview: m.bodyPreview,
+              webLink: m.webLink,
+              _mailbox: mailbox,
+              _matchedTerm: term,
+              _matchedScope: searchScope
+            });
           }
-
-          if (onlyWithAttachments && !m.hasAttachments) continue;
-
-          if (yearFilter) {
-            const y = new Date(m.receivedDateTime).getFullYear();
-            if (y !== yearFilter) continue;
-          }
-
-          if (excludeLouvenberg && fromAddress.endsWith('@louvenbergadvies.nl')) continue;
-
-          if (unique.has(m.id)) continue;
-          unique.set(m.id, {
-            id: m.id,
-            subject: m.subject,
-            from: m.from,
-            receivedDateTime: m.receivedDateTime,
-            hasAttachments: !!m.hasAttachments,
-            bodyPreview: m.bodyPreview,
-            webLink: m.webLink,
-            _mailbox: mailbox,
-            _matchedTerm: term,
-            _matchedScope: searchScope
-          });
+          pageUrl = data['@odata.nextLink'] || null;
         }
       } catch (e) {
         // Ignore mailbox-level failures so one inaccessible mailbox does not fail all searches.
