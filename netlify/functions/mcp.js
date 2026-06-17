@@ -151,7 +151,7 @@ async function searchMessages(
     // Graph does not support combining $search and $filter on /messages.
     // Embed the year constraint in the KQL query via the received: property instead.
     if (yearFilter) {
-      base += ` AND received>=${yearFilter}-01-01 AND received<=${yearFilter}-12-31`;
+      base += ` AND received:${yearFilter}`;
     }
     return base;
   }
